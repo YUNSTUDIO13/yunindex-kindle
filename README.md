@@ -8,7 +8,7 @@
 ## ✨ 特性
 
 - **真实逐秒计时**：阅读器处于活跃前台 + 屏幕点亮时逐秒累积；熄屏暂停、关书停止、换书继续。
-- **事件驱动 daemon（v11.0）**：熄屏 / 亮屏走 `lipc-wait-event` 通道，非阅读时段近乎零耗电。
+- **事件驱动 daemon**：熄屏 / 亮屏走 `lipc-wait-event` 通道，非阅读时段近乎零耗电。
 - **自动降级**：若设备不支持 `goingToScreenSaver`，自动退回轮询模式，照常计时，绝不卡屏。
 - **单页 dashboard**：9 个核心指标 + 周节奏柱状图 + 高亮金句按月轮播 + 年份切换。
 - **高亮句解析**：兼容 UTF-8 BOM 的 `My Clippings.txt`，按时间倒序轮播。
@@ -17,9 +17,9 @@
 
 ---
 
-## 📊 性能数据（v10.x vs v11.0）
+## 📊 性能数据（轮询 vs 事件驱动）
 
-| 时段 | v10.x 轮询 | v11.0 事件驱动 | 提升 |
+| 时段 | 轮询 | 事件驱动 | 提升 |
 |---|---|---|---|
 | 阅读中 CPU 唤醒 | 每 15 秒一次 | 120 秒兜底 + 熄屏事件触发 | **~8×** |
 | 非阅读 CPU 唤醒 | 每 15 秒一次 | 几乎为零（事件触发） | **~20×** |
@@ -37,7 +37,7 @@ yunindex-kindle/
 ├─ RUNME.sh                              # 安装启动入口（搜索栏 ;log runme）
 └─ native-reading-time-package/
    ├─ Yunindex阅读统计.sh                # dashboard 渲染（busybox awk + fbink）
-   ├─ native-reading-time-daemon.sh      # Upstart 守护进程（事件驱动 v11.0）
+   ├─ native-reading-time-daemon.sh      # Upstart 守护进程（事件驱动）
    ├─ Install-Native-Reading-Time.sh     # 安装脚本
    ├─ reading-insights-touch.lua         # 触摸监听（年份切换 + 2 分钟超时退出）
    ├─ native-reading-time.conf           # daemon 配置
@@ -93,8 +93,8 @@ yunindex-kindle/
 
 ## 📦 版本
 
-- **v2.0（当前）**：品牌改名 `Yunindex`；daemon 升级到 v11.0 事件驱动版；单页 dashboard。
-- **v1.x**：原品牌版本，daemon v10.x 轮询版，dashboard 双页布局。
+- **v2.0（当前）**：品牌改名 `Yunindex`；daemon 升级到事件驱动版；单页 dashboard。
+- **v1.x**：原品牌版本，daemon 轮询版，dashboard 双页布局。
 
 ---
 
@@ -115,7 +115,7 @@ yunindex-kindle/
 daemon 启动时会把模型版本写入 `/mnt/us/reading-time/service.log` 首行：
 
 ```
-... model=v11.0-6col, goingToScreenSaver=1 ...
+... model=v2.0-6col, goingToScreenSaver=1 ...
 ```
 
 - `goingToScreenSaver=1` → **事件路径已生效**（省电 7~8 倍）。
