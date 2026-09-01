@@ -1,0 +1,80 @@
+Yunindex阅读统计 v2.0 · 单页版安装说明
+======================================================
+
+适配：KPW6 / 5.19.03 / Vera 越狱。无需 KUAL，Vera 自带 KPM，`;log runme` 有效。
+
+面板内容：今日 / 本周阅读 / 本月日均 / 连续阅读
+        + 本周节奏柱图 + 本年统计（累计时长 / 天数 / 在读 / 完成）+ 金句。
+
+------------------------------------------------
+
+安装步骤
+------------------------------------------------
+1. 把本文件夹【里面的全部内容】平铺复制到 Kindle 的 USB 根目录 /mnt/us/。
+   复制后 USB 根直接可见：
+
+     /mnt/us/
+     ├─ RUNME.sh                        ← 入口，必须在根
+     ├─ UNINSTALL.sh
+     ├─ 安装说明.txt / 卸载说明.txt
+     └─ native-reading-time-package/    ← 安装包（必须直接在根）
+        ├─ Yunindex阅读统计.sh / Install-Native-Reading-Time.sh
+        ├─ native-reading-time-daemon.sh / .conf
+        ├─ NotoSerifSC-Regular.otf / -Bold.otf / FONT-LICENSE.txt
+        └─ ui/  (compose.py / dashboard_bg.png / quotes.tsv)
+
+   ⚠️ 千万不要删 /mnt/us/reading-time/ —— 里面是阅读明细数据（见文末 FAQ）。
+      覆盖安装即可，安装器会自动备份 .bak-时间戳 并原样保留。
+   ⚠️ 复制后务必「安全弹出」再拔线，否则文件可能只留在电脑缓存没写入。
+
+2. 拔线，首页搜索栏输入（不带引号）：
+       ;log runme
+   回车。
+
+3. 安装器自动完成：探测 FBInk / Python3+Pillow（快通道，缺失则降级纯 fbink
+   慢通道）、装守护进程 + 字体 + 单页背景图到 /mnt/us/reading-time/、
+   装 Upstart 任务并启动。任何失败都会把日志导出到 USB 根 LOG-install.log。
+
+4. 顶部 toaster 出现：
+       Yunindex阅读统计 v2.0 installed
+   即成功。打开方式：文档区点击「Yunindex阅读统计.sh」。
+
+------------------------------------------------
+如何确认装的是新版（而非旧残留）
+------------------------------------------------
+· 看 toaster：含 **v2.0** 才是本版（旧版无版本号）。
+· 或看安装日志：
+      tail -n 5 /mnt/us/reading-time/install.log
+  本版首行会打出：
+      installer v2.0 (single-page / no-touch / SerifSC-only) entered
+  若看到的是旧格式或无此标记，说明 Kindle 跑的还是旧代码。
+
+------------------------------------------------
+排错
+------------------------------------------------
+- 完全没反应（无 toaster、无 LOG-install.log）：
+    · 先确认 RUNME.sh 与 native-reading-time-package/ 都直接在 USB 根；
+    · 确认已「安全弹出」；
+    · 仍无效 → 用文末「手动安装」绕过 ;log runme。
+- 有 toaster 但安装失败：USB 根会生成 LOG-install.log，拷回电脑看具体原因。
+- 需要 Vera 越狱（自带 KPM + FBInk）；无需 KUAL。
+- 「累计时长」= 本年累计（与 v12.0 年度页一致）；要改「本月累计」请告知。
+
+------------------------------------------------
+数据安全 FAQ
+------------------------------------------------
+- /mnt/us/reading-time/reading-time.tsv = 插件逐日累积的阅读明细
+  （后台 daemon 从系统 lipc 实时读数写入）。覆盖安装时安装器自动备份
+  为 .bak-时间戳 并原样保留，无需手动删。
+- Kindle 系统原生阅读记录（设置→阅读时长、每本书进度/时长）在系统侧，
+  **不在 /mnt/us/reading-time/ 内**，删这个目录不会影响它。
+- 若已误删：系统记录无恙，仅插件逐日明细清空，daemon 重启后从系统
+  重新累积，几天后恢复完整。
+
+------------------------------------------------
+手动安装（;log runme 完全没反应时的备选）
+------------------------------------------------
+在 Kindle 终端（SSH / KOReader 终端 / Vera 终端）以 root 执行：
+      /bin/sh /mnt/us/native-reading-time-package/Install-Native-Reading-Time.sh
+成功会弹 toaster；失败则在 USB 根生成 LOG-install.log。
+（无 root 时先 `id` 确认 uid，必要时 `mntroot rw` 后 sudo/su。）
