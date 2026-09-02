@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v2.0 dashboard_bg.png · 单页 dashboard 背景生成器
+v2.1 dashboard_bg.png · 单页 dashboard 背景生成器
 - Noto Serif SC 衬线体（按效果图）
 - 配色 #FFFFFF / #161616 / #BDB8AB（按设计说明）
 - 字段无单位（按效果图）

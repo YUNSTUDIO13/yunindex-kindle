@@ -1,4 +1,4 @@
-Yunindex阅读统计 v2.0 · 单页版安装说明
+Yunindex阅读统计 v2.1 · 单页版安装说明
 ======================================================
 
 适配：KPW6 / 5.19.03 / Vera 越狱。无需 KUAL，Vera 自带 KPM，`;log runme` 有效。
@@ -36,17 +36,17 @@ Yunindex阅读统计 v2.0 · 单页版安装说明
    装 Upstart 任务并启动。任何失败都会把日志导出到 USB 根 LOG-install.log。
 
 4. 顶部 toaster 出现：
-       Yunindex阅读统计 v2.0 installed
+       Yunindex阅读统计 v2.1 installed
    即成功。打开方式：文档区点击「Yunindex阅读统计.sh」。
 
 ------------------------------------------------
 如何确认装的是新版（而非旧残留）
 ------------------------------------------------
-· 看 toaster：含 **v2.0** 才是本版（旧版无版本号）。
+· 看 toaster：含 **v2.1** 才是本版（旧版无版本号）。
 · 或看安装日志：
       tail -n 5 /mnt/us/reading-time/install.log
   本版首行会打出：
-      installer v2.0 (single-page / no-touch / SerifSC-only) entered
+      installer v2.1 (single-page / no-touch / SerifSC-only) entered
   若看到的是旧格式或无此标记，说明 Kindle 跑的还是旧代码。
 
 ------------------------------------------------

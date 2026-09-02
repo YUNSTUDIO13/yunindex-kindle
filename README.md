@@ -78,7 +78,7 @@ yunindex-kindle/
 1. **下载**：克隆或下载本仓库到本地。
 2. **拷贝**：把仓库根目录的 `RUNME.sh` 和 `native-reading-time-package/` 文件夹拖到 Kindle **USB 根目录**。
 3. **安装**：在 Kindle 主页搜索栏输入 `;log runme`，回车。
-4. **确认**：装完底部会弹提示 `Yunindex阅读统计 v2.0 installed`。
+4. **确认**：装完底部会弹提示 `Yunindex阅读统计 v2.1 installed`。
 5. **启动**：搜索栏输入 `;log mrpi`，回车，进入 dashboard。
 
 > 升级时直接覆盖目录再 `;log runme` 即可，阅读数据自动备份。
@@ -93,8 +93,28 @@ yunindex-kindle/
 
 ## 📦 版本
 
-- **v2.0（当前）**：品牌改名 `Yunindex`；daemon 升级到事件驱动版；单页 dashboard。
+- **v2.1（当前）**：修复 dashboard 打开时「闪屏两次才显示数据」的问题——渲染改单次 GC16 全刷，打开即直接显示完整数据。
+- **v2.0**：品牌改名 `Yunindex`；daemon 升级到事件驱动版；单页 dashboard。
 - **v1.x**：原品牌版本，daemon 轮询版，dashboard 双页布局。
+
+---
+
+## 🔧 v2.1 迭代说明（屏闪修复）
+
+**现象**：打开 dashboard 时先闪一次空背景、再连续闪两次屏，最后才显示所有数据。
+
+**根因**：慢路径渲染把 FBInk 刷屏拆成了多次——
+
+1. `fbink -g` 推空背景图时未加 `-b`（不刷新），先刷了一次空背景；
+2. 最后 commit 用了 `-f -W GC16 -s`，其中 `-f`（黑闪 flash）与 `-W GC16`（灰度全刷）叠加，造成「连续两次闪屏」。
+
+**修复**：
+
+- 推背景加 `-b`：只写 framebuffer 不刷屏；
+- commit 去掉 `-f` flash：只保留单次 `-W GC16 -s` 灰度全刷；
+- FAST 路径同步合并为单次「推图 + GC16 全刷」。
+
+**效果**：慢 / 快路径都从「多次闪屏」降为「单次 GC16 全刷」（e-ink 清残影必需的一次闪），打开即显示完整数据。
 
 ---
 
@@ -115,7 +135,7 @@ yunindex-kindle/
 daemon 启动时会把模型版本写入 `/mnt/us/reading-time/service.log` 首行：
 
 ```
-... model=v2.0-6col, goingToScreenSaver=1 ...
+... model=v2.1-6col, goingToScreenSaver=1 ...
 ```
 
 - `goingToScreenSaver=1` → **事件路径已生效**（省电 7~8 倍）。

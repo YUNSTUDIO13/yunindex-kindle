@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Yunindex阅读统计 v2.0 · 单页 dashboard launcher
+# Yunindex阅读统计 v2.1 · 单页 dashboard launcher
 # 架构：
 #   FAST（设备有 python3 + Pillow）：compose.py 整页合成 → fbink -g 推 1 次
 #   慢路径（无 PIL，纯 fbink）：推背景 PNG → fbink 多次 -t/-k 叠加数字与柱体
@@ -19,7 +19,7 @@ TAB=$(printf '\t')
 # 关键修复：先确保数据目录存在
 mkdir -p "$BASE" 2>/dev/null
 exec >> "$LOG" 2>&1
-echo "$(date): v2.0 single-page dashboard launch, uid=$(id -u)"
+echo "$(date): v2.1 single-page dashboard launch, uid=$(id -u)"
 
 FBINK_LOG="$BASE/fbink.log"
 UI_DIR="$BASE/ui"
@@ -555,8 +555,8 @@ if [ -n "$FAST_PY" ]; then
     if [ $? -eq 0 ] && [ -r "$PNG_TMP" ]; then
         echo "$(date): fast path ON python=$FAST_PY -> $PNG_TMP"
         collapse_system_ui
-        "$FBINK" -q -g "file=$PNG_TMP" 2>>"$FBINK_LOG" || { restore_system_ui; rm -f "$PNG_TMP"; fail "fbink push failed"; }
-        "$FBINK" -q -f -W GC16 -s 2>>"$FBINK_LOG" || true
+        # R48: 推图时直接 -W GC16 一次全刷，去掉后面冗余的 -f flash（消除 FAST 路径"闪2次"）
+        "$FBINK" -q -g "file=$PNG_TMP" -W GC16 2>>"$FBINK_LOG" || { restore_system_ui; rm -f "$PNG_TMP"; fail "fbink push failed"; }
         restore_system_ui
         rm -f "$PNG_TMP"
         return 0
@@ -568,9 +568,9 @@ fi
 # === SLOW path ===
 echo "$(date): fast path OFF python=$FAST_PY"
 
-# 1. 推背景
+# 1. 推背景（R48: 加 -b 只写 framebuffer 不刷屏，避免先闪一次空背景；统一到最后一次 commit 刷新，消除"闪2次"）
 collapse_system_ui
-"$FBINK" -q -g "file=$BASE_BG" 2>>"$FBINK_LOG" || { restore_system_ui; fail "bg push failed"; }
+"$FBINK" -q -b -g "file=$BASE_BG" 2>>"$FBINK_LOG" || { restore_system_ui; fail "bg push failed"; }
 
 # 2. 今日阅读大数字（左对齐 x=100 y=352）
 fb_text_at 130 352 100 800 BOLD BLACK - "$TODAY_STR"
@@ -659,8 +659,8 @@ fb_rect_at $((ar_y0 + 6)) $((year_cx - 45)) 90 50 WHITE
 # R35：年份 36pt 居中。4 位数字宽 ~80px，绘制区宽 88（left=year_cx-44, right=W-year_cx-44）让文字视觉中心=year_cx（之前 96 偏左 8px）
 fb_text_at 36 1539 $((year_cx - 44)) $((LOGICAL_W - year_cx - 44)) BOLD BLACK - "$hyear"
 
-# 9. commit
-"$FBINK" -q -f -W GC16 -s 2>>"$FBINK_LOG" || true
+# 9. commit（R48: 去掉 -f flash，纯 GC16 全刷。原来 -f + -W GC16 会叠加成"黑闪+灰度反转"的连续两次闪屏）
+"$FBINK" -q -W GC16 -s 2>>"$FBINK_LOG" || true
 restore_system_ui
 }
 

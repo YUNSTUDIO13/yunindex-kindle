@@ -25,7 +25,7 @@ export_install_log() { [ -f "$INSTALL_LOG" ] && cp "$INSTALL_LOG" "/mnt/us/LOG-i
 fail() { echo "$(date): ERROR: $1" | tee -a "$INSTALL_LOG"; export_install_log; toast "Installation failed: $1"; exit 1; }
 
 mkdir -p "$BASE"
-echo "$(date): installer v2.0 (single-page / no-touch / SerifSC-only) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
+echo "$(date): installer v2.1 (single-page / no-touch / SerifSC-only) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
 
 # ;log runme 必须以 root 调用
 [ "$(id -u)" -eq 0 ] || fail "not running as root; use ;log runme"
@@ -140,7 +140,7 @@ trap - EXIT INT TERM HUP
 sleep 2
 if /sbin/initctl status "$JOB" 2>/dev/null | grep -q 'start/running'; then
     echo "$(date): installed and running" | tee -a "$INSTALL_LOG"
-    toast "Yunindex阅读统计 v2.0 installed"
+    toast "Yunindex阅读统计 v2.1 installed"
     export_install_log
     exit 0
 fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Yunindex阅读统计 v2.0 · 整页 dashboard 合成器（快通道）。
+Yunindex阅读统计 v2.1 · 整页 dashboard 合成器（快通道）。
 
 设计：v13.0 单页 dashboard + 完全照效果图重做（衬线体 / 无单位字段 / 累计时长在下方首位）。
   - 顶部：剪影 logo + "Yunindex阅读统计" + 副标 + 关闭按钮
