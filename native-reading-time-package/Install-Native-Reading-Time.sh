@@ -46,6 +46,7 @@ lipc-set-prop com.lab126.powerd preventScreenSaver 0 >/dev/null 2>&1 || true
 [ -f "$PKG/NotoSerifSC-Bold.otf" ] || fail "missing Noto Serif SC Bold"
 [ -f "$PKG/FONT-LICENSE.txt" ] || fail "missing bundled font license"
 [ -f "$PKG/ui/dashboard_bg.png" ] || fail "missing single-page dashboard background PNG (expect at ui/)"
+[ -f "$PKG/ui/cover.png" ] || fail "missing scriptlet cover PNG (expect at ui/)"
 [ -f "$PKG/ui/compose.py" ] || fail "missing compose.py (expect at ui/)"
 [ -f "$PKG/ui/quotes.tsv" ] || fail "missing quotes.tsv (expect at ui/)"
 
@@ -65,6 +66,16 @@ chmod 755 "$DAEMON.new" || fail "cannot chmod daemon"
 mv "$DAEMON.new" "$DAEMON" || fail "cannot install daemon"
 rm -f "$BASE/bin/reading-insights-server.sh"
 killall reading-insights-server.sh >/dev/null 2>&1 || true
+# v13.0：安装单页 dashboard 资源（背景 PNG + 书封面 cover.png + compose.py + 金句 tsv）
+# v2.1：书封面 cover.png 必须【先于】launcher 复制就位——launcher 头部 # Icon: 指向 cover.png，
+#       若 launcher 先落地、封面后到，SH_Integration 首次索引时读不到 Icon → 图书馆无封面。
+mkdir -p "$UI_DIR" || fail "cannot create UI directory"
+cp "$PKG/ui/dashboard_bg.png" "$UI_DIR/dashboard_bg.png" || fail "cannot install dashboard_bg.png"
+cp "$PKG/ui/cover.png" "$UI_DIR/cover.png" || fail "cannot install cover.png"
+cp "$PKG/ui/compose.py" "$UI_DIR/compose.py" || fail "cannot install compose.py"
+cp "$PKG/ui/quotes.tsv" "$UI_DIR/quotes.tsv" || fail "cannot install quotes.tsv"
+chmod 644 "$UI_DIR"/*.png "$UI_DIR/compose.py" "$UI_DIR/quotes.tsv" || fail "cannot chmod UI assets"
+
 cp "$PKG/Yunindex阅读统计.sh" "$VIEWER" || fail "cannot install dashboard launcher"
 chmod 755 "$VIEWER" || fail "cannot chmod dashboard launcher"
 rm -f "/mnt/us/documents/书籍进度探测.sh"
@@ -80,13 +91,6 @@ cp "$PKG/NotoSerifSC-Bold.otf" "$FONT_DIR/NotoSerifSC-Bold.otf" || fail "cannot 
 rm -f "$FONT_DIR/DroidSansFallback.ttf"
 cp "$PKG/FONT-LICENSE.txt" "$FONT_DIR/FONT-LICENSE.txt" || fail "cannot install font license"
 chmod 644 "$FONT_DIR"/* || fail "cannot chmod font files"
-
-# v13.0：安装单页 dashboard 资源（背景 PNG + compose.py + 金句 tsv）
-mkdir -p "$UI_DIR" || fail "cannot create UI directory"
-cp "$PKG/ui/dashboard_bg.png" "$UI_DIR/dashboard_bg.png" || fail "cannot install dashboard_bg.png"
-cp "$PKG/ui/compose.py" "$UI_DIR/compose.py" || fail "cannot install compose.py"
-cp "$PKG/ui/quotes.tsv" "$UI_DIR/quotes.tsv" || fail "cannot install quotes.tsv"
-chmod 644 "$UI_DIR"/*.png "$UI_DIR/compose.py" "$UI_DIR/quotes.tsv" || fail "cannot chmod UI assets"
 
 # v13.0：探测设备是否具备 python3 + Pillow（快通道）。缺失仅降级为纯 fbink 慢路径，不致命但给出提示。
 PIL_OK=0
@@ -111,6 +115,9 @@ if [ "$FBINK_CAND" != "/var/local/kmc/bin/fbink" ]; then
 fi
 
 lipc-set-prop com.lab126.scanner doFullScan 1 >/dev/null 2>&1 || lipc-set-prop com.lab126.scanner triggerUpdate 1 >/dev/null 2>&1 || true
+
+# v2.1：确保 UNINSTALL.sh 在 USB 根且可执行（Vera ;log 只认 runme，卸载由 RUNME.sh 检测 uninstall.flag 触发）
+[ -f "/mnt/us/UNINSTALL.sh" ] && chmod +x "/mnt/us/UNINSTALL.sh" 2>/dev/null || true
 
 /sbin/initctl stop "$JOB" >/dev/null 2>&1 || true
 

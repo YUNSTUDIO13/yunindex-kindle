@@ -1,4 +1,7 @@
 #!/bin/sh
+# Name: Yunindex阅读统计
+# Author: YUNSTUDIO13
+# Icon: /mnt/us/reading-time/ui/cover.png
 #
 # Yunindex阅读统计 v2.1 · 单页 dashboard launcher
 # 架构：

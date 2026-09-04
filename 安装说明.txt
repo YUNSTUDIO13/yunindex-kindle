@@ -6,6 +6,14 @@ Yunindex阅读统计 v2.1 · 单页版安装说明
 面板内容：今日 / 本周阅读 / 本月日均 / 连续阅读
         + 本周节奏柱图 + 本年统计（累计时长 / 天数 / 在读 / 完成）+ 金句。
 
+封面（书封面，独立于背景）：桌面 logo.png（1258×1676 RGB）作为「书封面」，
+      独立文件为 ui/cover.png，launcher 头部 `# Icon:` 指向它 → 装好后图书馆/主页里
+      「Yunindex阅读统计」会像一本带封面的书平铺显示（Vera Scriptlet 机制）。
+      dashboard 打开后的背景仍是原 generate_bg.py 输出（ui/dashboard_bg.png），未被改动。
+
+卸载（务必看）：Vera 越狱的 `;log` 不支持 uninstall，本插件改用「标记文件 + ;log runme」
+方案——详见文末【如何卸载】章节。
+
 ------------------------------------------------
 
 安装步骤
@@ -21,10 +29,12 @@ Yunindex阅读统计 v2.1 · 单页版安装说明
         ├─ Yunindex阅读统计.sh / Install-Native-Reading-Time.sh
         ├─ native-reading-time-daemon.sh / .conf
         ├─ NotoSerifSC-Regular.otf / -Bold.otf / FONT-LICENSE.txt
-        └─ ui/  (compose.py / dashboard_bg.png / quotes.tsv)
+        └─ ui/  (compose.py / dashboard_bg.png / cover.png / quotes.tsv)
 
    ⚠️ 千万不要删 /mnt/us/reading-time/ —— 里面是阅读明细数据（见文末 FAQ）。
       覆盖安装即可，安装器会自动备份 .bak-时间戳 并原样保留。
+   ⚠️ UNINSTALL.sh 必须与 RUNME.sh 一起复制到 USB 根（两者同一目录）。
+      否则将来无法通过 RUNME.sh 卸载（详见文末【如何卸载】）。
    ⚠️ 复制后务必「安全弹出」再拔线，否则文件可能只留在电脑缓存没写入。
 
 2. 拔线，首页搜索栏输入（不带引号）：
@@ -33,11 +43,29 @@ Yunindex阅读统计 v2.1 · 单页版安装说明
 
 3. 安装器自动完成：探测 FBInk / Python3+Pillow（快通道，缺失则降级纯 fbink
    慢通道）、装守护进程 + 字体 + 单页背景图到 /mnt/us/reading-time/、
-   装 Upstart 任务并启动。任何失败都会把日志导出到 USB 根 LOG-install.log。
+   装 Upstart 任务并启动、自动 chmod +x UNINSTALL.sh 供后续卸载。
+   任何失败都会把日志导出到 USB 根 LOG-install.log。
 
 4. 顶部 toaster 出现：
        Yunindex阅读统计 v2.1 installed
-   即成功。打开方式：文档区点击「Yunindex阅读统计.sh」。
+   即成功。打开方式：图书馆/主页会多出一本带 logo 封面的书「Yunindex阅读统计」，
+   点击它即可打开 dashboard。
+
+------------------------------------------------
+如何卸载（务必看完）
+------------------------------------------------
+Vera 越狱（KPW6 / 5.19.03）的 `;log` 只支持 mrpi / runme 两个 action，**不支持 uninstall**。
+本插件改用「标记文件 + 同一个 ;log runme 入口」：
+
+  1. 桌面上已备好现成的标记文件 `uninstall.flag`（0 字节空文件）。想卸载时，
+     把它【单独】拖到 USB 根（/mnt/us/，与 RUNME.sh 同级），其它文件不动。
+     · 文件名兼容 uninstall.flag / uninstall.flag.rtf / uninstall.flag.txt（RUNME.sh
+       已改为通配匹配），无需纠结扩展名。
+  2. 安全弹出 Kindle，搜索栏输入 `;log runme` 回车。
+  3. RUNME.sh 检测到标记文件 → 自动调起 UNINSTALL.sh → 弹 toaster 提示
+     "Reading time tracker uninstalled"，并删掉自身 + 所有 uninstall.flag* 变体。
+
+卸载会保留 /mnt/us/reading-time-backup-<时间戳>/ 数据备份，可拷回恢复历史。
 
 ------------------------------------------------
 如何确认装的是新版（而非旧残留）
@@ -57,6 +85,8 @@ Yunindex阅读统计 v2.1 · 单页版安装说明
     · 确认已「安全弹出」；
     · 仍无效 → 用文末「手动安装」绕过 ;log runme。
 - 有 toaster 但安装失败：USB 根会生成 LOG-install.log，拷回电脑看具体原因。
+- 卸载时提示 "UNINSTALL.sh not found; reinstall first"：UNINSTALL.sh 没同步到
+  /mnt/us/，在电脑把它复制到 USB 根再次 ;log runme 即可。
 - 需要 Vera 越狱（自带 KPM + FBInk）；无需 KUAL。
 - 「累计时长」= 本年累计（与 v12.0 年度页一致）；要改「本月累计」请告知。
 

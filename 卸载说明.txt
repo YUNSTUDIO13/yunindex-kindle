@@ -1,39 +1,17 @@
 Yunindex阅读统计 v2.1 · 卸载说明
 ============================================
 
-【触发方式（最简单，推荐）】
-1. 确认 USB 根目录有 UNINSTALL.sh（与安装时同理，UNINSTALL.sh 需出现在 /mnt/us/ 根）。
-   · 若当初是平铺安装：/mnt/us/UNINSTALL.sh 已在。
-   · 若当初整个文件夹放 USB 根：把 kindle阅读统计插件/UNINSTALL.sh 复制到 USB 根。
-2. 安全弹出 Kindle，在首页搜索栏输入（不带引号）：
-       ;log uninstall
-   回车。
-3. 稍候屏幕顶部 toaster 提示 “Reading time tracker uninstalled” 即完成。
+【怎么卸载（三步）】
+1. 把这两个文件拖到 Kindle 的 USB 根目录（和 RUNME.sh 同级）：
+     · uninstall.flag
+     · UNINSTALL.sh
+2. 安全弹出，搜索栏输入 ;log runme，回车。
+3. 顶部弹 "Reading time tracker uninstalled" 即卸载完成。
 
-【SSH / USBNet 方式（可选）】
-登录后执行：
-       sh /mnt/us/UNINSTALL.sh
-想先看会动哪些文件、不真删，可加环境变量预览：
-       DRY_RUN=1 sh /mnt/us/UNINSTALL.sh
-
-【会清理掉什么】
-- Upstart 守护进程 native-reading-time 及其配置 /etc/upstart/native-reading-time.conf
-- /mnt/us/reading-time/ 整个目录（守护脚本、字体、背景图、UI 资源、日志等）
-- /mnt/us/documents/Yunindex阅读统计.sh（文档里的启动器）
-- /mnt/us/native-reading-time-package/（安装包目录，若仍在）
-- /mnt/us/LOG-install.log
-- 旧版残留：书籍进度探测.sh / 阅读页数探测.sh / 阅读洞察.sh / page-turn-probe-* /
-  reading-insights-server.sh（如有）
-- 复位 lipc 属性 eatTapMode、preventScreenSaver 为安全默认（0）
-
-【你的数据不会丢】
-卸载前会自动把阅读数据备份到：
-       /mnt/us/reading-time-backup-<时间戳>/
-里面含 reading-time.tsv（及 .bak 备份）、阅读时长统计.txt、state。
-以后若重装本插件，把该备份拷回 /mnt/us/reading-time/ 即可恢复历史。
+【数据不丢】
+卸载时阅读数据（reading-time.tsv 等）原位保留、不删除，
+重新安装后自动续用，无需手动拖回。
 
 【排错】
-- 若提示 rootfs 只读 / “Could not remove Upstart job”：重启 Kindle 后再跑一次 ;log uninstall。
-- 卸载完成后，可手动删除 /mnt/us/UNINSTALL.sh 与 /mnt/us/reading-time-backup-* 文件夹
-  （脚本已自动删掉自身，备份可保留也可删）。
-- 卸载不会触碰系统分区其它文件，可放心使用。
+- 提示 "UNINSTALL.sh not found"：UNINSTALL.sh 没拖到根，拖进去再跑一次。
+- 提示 rootfs 只读：重启 Kindle 再跑一次。

@@ -12,7 +12,7 @@
 # 说明：
 #   - 会自动停止 Upstart 守护进程并删除其配置
 #   - 会删除：守护脚本、字体、背景图、touch lua、文档启动器、安装包目录、旧版残留
-#   - 会【备份】你的阅读数据到 /mnt/us/reading-time-backup-<时间戳>/ 再删除原目录
+#   - 会【保留】你的阅读数据（reading-time.tsv / state / 阅读时长统计.txt 原位不删，重装自动续用）
 #   - 会复位 eatTapMode / preventScreenSaver 为安全默认值（0）
 #   - 删除前若 rootfs 为只读会自动 remount rw，失败则跳过 Upstart 清理并提示
 # ============================================================
@@ -23,9 +23,7 @@ CONF="/etc/upstart/${JOB}.conf"
 BASE="/mnt/us/reading-time"
 PKG="/mnt/us/native-reading-time-package"
 VIEWER="/mnt/us/documents/Yunindex阅读统计.sh"
-TS="$(date +%Y%m%d-%H%M%S)"
 UNINSTALL_LOG="/mnt/us/UNINSTALL.log"
-BACKUP="/mnt/us/reading-time-backup-${TS}"
 
 # ---- 干跑模式：DRY_RUN=1 时只打印不执行 ----
 DRY_RUN="${DRY_RUN:-0}"
@@ -74,17 +72,10 @@ run pkill -f "Yunindex阅读统计.sh" >/dev/null 2>&1 || true
 run pkill -f "reading-insights-touch.lua" >/dev/null 2>&1 || true
 log "daemon stop signals sent"
 
-# ---- 2. 备份用户阅读数据（先备份，后删除原目录）----
-if [ -f "$BASE/reading-time.tsv" ]; then
-    run mkdir -p "$BACKUP"
-    run cp -Rp "$BASE/reading-time.tsv"         "$BACKUP/" 2>/dev/null || true
-    run cp -Rp "$BASE/reading-time.tsv.bak-"*   "$BACKUP/" 2>/dev/null || true
-    run cp -Rp "$BASE/阅读时长统计.txt"          "$BACKUP/" 2>/dev/null || true
-    run cp -Rp "$BASE/state"                    "$BACKUP/" 2>/dev/null || true
-    log "user data backed up to $BACKUP"
-else
-    log "no reading-time.tsv found, skip backup"
-fi
+# ---- 2. 保留用户阅读数据（原位不动，重装自动续用）----
+# 数据文件 reading-time.tsv / reading-time.tsv.bak-* / state / 阅读时长统计.txt / .quote_idx 全部保留，
+# 只删程序文件（bin/fonts/ui）与日志（见下方第 4 步）。
+log "keeping user data in place (reading-time.tsv, state, 阅读时长统计.txt)"
 
 # ---- 3. 删除 Upstart 配置（需要 rootfs 可写）----
 if [ -f "$CONF" ]; then
@@ -101,10 +92,14 @@ else
     log "upstart conf not present, skip"
 fi
 
-# ---- 4. 删除已安装的程序文件 ----
-log "removing installed files"
+# ---- 4. 删除已安装的程序文件（数据文件保留）----
+log "removing installed files (keeping user data)"
 run rm -f  "$VIEWER"
-run rm -rf "$BASE"
+run rm -rf "$BASE/bin"
+run rm -rf "$BASE/fonts"
+run rm -rf "$BASE/ui"
+run rm -f  "$BASE/service.log" "$BASE/install.log" "$BASE/upstart.log" \
+           "$BASE/dashboard-launch.log" "$BASE/dashboard-touch.log" "$BASE/fbink.log"
 run rm -rf "$PKG"
 run rm -f  "/mnt/us/LOG-install.log"
 
