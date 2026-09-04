@@ -3,7 +3,7 @@
 # Author: YUNSTUDIO13
 # Icon: /mnt/us/reading-time/ui/cover.png
 #
-# Yunindex阅读统计 v2.1 · 单页 dashboard launcher
+# Yunindex阅读统计 v2.2 · 单页 dashboard launcher
 # 架构：
 #   FAST（设备有 python3 + Pillow）：compose.py 整页合成 → fbink -g 推 1 次
 #   慢路径（无 PIL，纯 fbink）：推背景 PNG → fbink 多次 -t/-k 叠加数字与柱体
@@ -22,7 +22,7 @@ TAB=$(printf '\t')
 # 关键修复：先确保数据目录存在
 mkdir -p "$BASE" 2>/dev/null
 exec >> "$LOG" 2>&1
-echo "$(date): v2.1 single-page dashboard launch, uid=$(id -u)"
+echo "$(date): v2.2 single-page dashboard launch, uid=$(id -u)"
 
 FBINK_LOG="$BASE/fbink.log"
 UI_DIR="$BASE/ui"

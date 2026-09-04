@@ -34,7 +34,10 @@
 
 ```
 yunindex-kindle/
-├─ RUNME.sh                              # 安装启动入口（搜索栏 ;log runme）
+├─ RUNME.sh                              # 智能入口：安装 + 卸载（搜索栏 ;log runme）
+├─ UNINSTALL.sh                          # 卸载脚本（默认保留阅读数据）
+├─ uninstall.flag                        # 卸载信号（与 UNINSTALL.sh 一起拖到根目录 → ;log runme）
+├─ 安装说明.txt / 卸载说明.txt
 └─ native-reading-time-package/
    ├─ Yunindex阅读统计.sh                # dashboard 渲染（busybox awk + fbink）
    ├─ native-reading-time-daemon.sh      # Upstart 守护进程（事件驱动）
@@ -46,7 +49,8 @@ yunindex-kindle/
    ├─ ui/dashboard_bg.png                # 仪表板静态背景（已嵌入「Yunindex阅读统计」标题）
    ├─ fonts/NotoSansSC-Regular.otf       # 中文 Sans（嵌入）
    ├─ fonts/NotoSerifSC-Bold.otf         # 中文 Serif Bold（嵌入）
-   └─ 安装说明.txt / 卸载说明.txt
+   ├─ ui/cover.png                       # 脚本封面（图书馆显示为带封面的书）
+   └─ ui/quotes.tsv                      # 高亮金句数据
 ```
 
 > 字体嵌入是为 Kindle 上无中文字体可用做的兜底；其他 Kindle 型号可忽略。
@@ -85,15 +89,17 @@ yunindex-kindle/
 
 ## 🗑️ 卸载
 
-在 Kindle 搜索栏输入 `;log mrpi -u`（uninstall），回车，**或** 删除 `/var/local/mesra/upstart/` 下的 job 链接后重启。
+1. 把仓库根目录的 `uninstall.flag` 和 `UNINSTALL.sh` 两个文件拖到 Kindle **USB 根目录**。
+2. 在 Kindle 主页搜索栏输入 `;log runme`，回车 → 自动触发卸载。
 
-卸载脚本默认保留 `/mnt/us/reading-time/`（含全部历史数据），如需彻底清空再手动删除该目录。
+卸载默认保留 `/mnt/us/reading-time/`（含全部历史阅读数据），重装后自动续用；如需彻底清空再手动删除该目录。
 
 ---
 
 ## 📦 版本
 
-- **v2.1（当前）**：修复 dashboard 打开时「闪屏两次才显示数据」的问题——渲染改单次 GC16 全刷，打开即直接显示完整数据。
+- **v2.2（当前）**：卸载信号文件 `uninstall.flag` 随仓库分发；卸载默认保留阅读数据（重装自动续用）；图书馆显示脚本封面。
+- **v2.1**：修复 dashboard 打开时「闪屏两次才显示数据」的问题——渲染改单次 GC16 全刷，打开即直接显示完整数据。
 - **v2.0**：品牌改名 `Yunindex`；daemon 升级到事件驱动版；单页 dashboard。
 - **v1.x**：原始版本未命名，daemon 轮询版，dashboard 双页布局。
 
@@ -135,7 +141,7 @@ yunindex-kindle/
 daemon 启动时会把模型版本写入 `/mnt/us/reading-time/service.log` 首行：
 
 ```
-... model=v2.1-6col, goingToScreenSaver=1 ...
+... model=v2.2-6col, goingToScreenSaver=1 ...
 ```
 
 - `goingToScreenSaver=1` → **事件路径已生效**（省电 7~8 倍）。

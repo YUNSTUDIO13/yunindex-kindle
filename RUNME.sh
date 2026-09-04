@@ -8,7 +8,7 @@
 #       导致 SCRIPT_DIR 解析到错误目录 → 找不到 installer → 静默退出「完全没反应」。
 #       故改回硬编码为主、自定位仅作兜底。
 #
-# v2.1 · 智能入口（同时承载安装与卸载）：
+# v2.2 · 智能入口（同时承载安装与卸载）：
 #   Vera 越狱的 ;log 只接受 mrpi/runme，不支持 ;log uninstall。
 #   因此 RUNME.sh 改造为「标记文件分发」：
 #     · 正常安装  → 直接调 Install-Native-Reading-Time.sh

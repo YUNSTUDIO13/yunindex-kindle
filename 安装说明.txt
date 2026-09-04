@@ -1,4 +1,4 @@
-Yunindex阅读统计 v2.1 · 单页版安装说明
+Yunindex阅读统计 v2.2 · 单页版安装说明
 ======================================================
 
 适配：KPW6 / 5.19.03 / Vera 越狱。无需 KUAL，Vera 自带 KPM，`;log runme` 有效。
@@ -18,14 +18,17 @@ Yunindex阅读统计 v2.1 · 单页版安装说明
 
 安装步骤
 ------------------------------------------------
-1. 把本文件夹【里面的全部内容】平铺复制到 Kindle 的 USB 根目录 /mnt/us/。
-   复制后 USB 根直接可见：
+1. 安装时，把【这三样】复制到 Kindle 的 USB 根目录 /mnt/us/（说明文档可不复制）：
 
      /mnt/us/
      ├─ RUNME.sh                        ← 入口，必须在根
-     ├─ UNINSTALL.sh
-     ├─ 安装说明.txt / 卸载说明.txt
+     ├─ UNINSTALL.sh                    ← 卸载脚本（与 RUNME.sh 同在根）
      └─ native-reading-time-package/    ← 安装包（必须直接在根）
+
+   ⚠️ 仓库根还有个 `uninstall.flag`（0 字节空文件），它是【卸载信号】——
+      安装时【千万不要】把它拖进 Kindle！一旦它出现在 /mnt/us/ 根，
+      ;log runme 会被误判为「卸载」而非「安装」。
+      uninstall.flag 只在卸载时单独使用（见下方【如何卸载】）。
         ├─ Yunindex阅读统计.sh / Install-Native-Reading-Time.sh
         ├─ native-reading-time-daemon.sh / .conf
         ├─ NotoSerifSC-Regular.otf / -Bold.otf / FONT-LICENSE.txt
@@ -47,7 +50,7 @@ Yunindex阅读统计 v2.1 · 单页版安装说明
    任何失败都会把日志导出到 USB 根 LOG-install.log。
 
 4. 顶部 toaster 出现：
-       Yunindex阅读统计 v2.1 installed
+       Yunindex阅读统计 v2.2 installed
    即成功。打开方式：图书馆/主页会多出一本带 logo 封面的书「Yunindex阅读统计」，
    点击它即可打开 dashboard。
 
@@ -57,24 +60,24 @@ Yunindex阅读统计 v2.1 · 单页版安装说明
 Vera 越狱（KPW6 / 5.19.03）的 `;log` 只支持 mrpi / runme 两个 action，**不支持 uninstall**。
 本插件改用「标记文件 + 同一个 ;log runme 入口」：
 
-  1. 桌面上已备好现成的标记文件 `uninstall.flag`（0 字节空文件）。想卸载时，
-     把它【单独】拖到 USB 根（/mnt/us/，与 RUNME.sh 同级），其它文件不动。
+  1. 交付目录（或 GitHub 仓库）里已带好标记文件 `uninstall.flag`（0 字节空文件）。
+     想卸载时，把它和 UNINSTALL.sh 一起拖到 USB 根（/mnt/us/，与 RUNME.sh 同级）。
      · 文件名兼容 uninstall.flag / uninstall.flag.rtf / uninstall.flag.txt（RUNME.sh
        已改为通配匹配），无需纠结扩展名。
   2. 安全弹出 Kindle，搜索栏输入 `;log runme` 回车。
   3. RUNME.sh 检测到标记文件 → 自动调起 UNINSTALL.sh → 弹 toaster 提示
      "Reading time tracker uninstalled"，并删掉自身 + 所有 uninstall.flag* 变体。
 
-卸载会保留 /mnt/us/reading-time-backup-<时间戳>/ 数据备份，可拷回恢复历史。
+卸载时阅读数据（reading-time.tsv 等）原位保留、不删除，重装后自动续用，无需手动拖回。
 
 ------------------------------------------------
 如何确认装的是新版（而非旧残留）
 ------------------------------------------------
-· 看 toaster：含 **v2.1** 才是本版（旧版无版本号）。
+· 看 toaster：含 **v2.2** 才是本版（旧版无版本号）。
 · 或看安装日志：
       tail -n 5 /mnt/us/reading-time/install.log
   本版首行会打出：
-      installer v2.1 (single-page / no-touch / SerifSC-only) entered
+      installer v2.2 (single-page / no-touch / SerifSC-only) entered
   若看到的是旧格式或无此标记，说明 Kindle 跑的还是旧代码。
 
 ------------------------------------------------

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Kindle 原生阅读时长守护进程 v2.1
+# Kindle 原生阅读时长守护进程 v2.2
 # 事件驱动省电：熄屏/亮屏用 lipc-wait-event 纯事件（零轮询），阅读中每 120s 低频兜底抓"关书不熄屏"，
 #   非阅读亮屏 30s 轮询抓"开书"；启动时自动探测 goingToScreenSaver，不存在则降级回 sleep 轮询（绝不忙循环）
 # 修复版：
@@ -161,7 +161,7 @@ if command -v lipc-wait-event >/dev/null 2>&1; then
     [ $((_gs_t1-_gs_t0)) -ge 1 ] && HAS_GS=1
 fi
 previous="$(date +%s)"; was_reader=0; current_id=""; current_title=""; service_state="等待阅读"; last_state=""; last_state_write=0
-echo "$(date): upstart service started, pid=$$, timing=event-driven-reader-active-screen, model=v2.1-6col, goingToScreenSaver=$HAS_GS" >> "$LOG"
+echo "$(date): upstart service started, pid=$$, timing=event-driven-reader-active-screen, model=v2.2-6col, goingToScreenSaver=$HAS_GS" >> "$LOG"
 write_report
 
 while :; do

@@ -1,4 +1,4 @@
--- Yunindex阅读统计 v2.1 触摸热区：与 Yunindex阅读统计.sh 的绘制坐标严格对应。
+-- Yunindex阅读统计 v2.2 触摸热区：与 Yunindex阅读统计.sh 的绘制坐标严格对应。
 -- 仅观测 evdev，无 EVIOCGRAB / eatTapMode / 不写设备。
 --
 -- 修正说明（依据 KPW6 实机诊断）：
@@ -71,7 +71,7 @@ local function action_for_physical(px, py)
     return action
 end
 
-note(string.format("touch watcher v2.1 device=%s mode=%s htab=%s viewport=%dx%d+%d+%d evsize=16B (fixed)",
+note(string.format("touch watcher v2.2 device=%s mode=%s htab=%s viewport=%dx%d+%d+%d evsize=16B (fixed)",
     device, mode, htab, view_w, view_h, origin_x, origin_y))
 
 while true do

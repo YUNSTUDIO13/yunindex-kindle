@@ -25,7 +25,7 @@ export_install_log() { [ -f "$INSTALL_LOG" ] && cp "$INSTALL_LOG" "/mnt/us/LOG-i
 fail() { echo "$(date): ERROR: $1" | tee -a "$INSTALL_LOG"; export_install_log; toast "Installation failed: $1"; exit 1; }
 
 mkdir -p "$BASE"
-echo "$(date): installer v2.1 (single-page / no-touch / SerifSC-only) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
+echo "$(date): installer v2.2 (single-page / no-touch / SerifSC-only) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
 
 # ;log runme 必须以 root 调用
 [ "$(id -u)" -eq 0 ] || fail "not running as root; use ;log runme"
@@ -67,7 +67,7 @@ mv "$DAEMON.new" "$DAEMON" || fail "cannot install daemon"
 rm -f "$BASE/bin/reading-insights-server.sh"
 killall reading-insights-server.sh >/dev/null 2>&1 || true
 # v13.0：安装单页 dashboard 资源（背景 PNG + 书封面 cover.png + compose.py + 金句 tsv）
-# v2.1：书封面 cover.png 必须【先于】launcher 复制就位——launcher 头部 # Icon: 指向 cover.png，
+# v2.2：书封面 cover.png 必须【先于】launcher 复制就位——launcher 头部 # Icon: 指向 cover.png，
 #       若 launcher 先落地、封面后到，SH_Integration 首次索引时读不到 Icon → 图书馆无封面。
 mkdir -p "$UI_DIR" || fail "cannot create UI directory"
 cp "$PKG/ui/dashboard_bg.png" "$UI_DIR/dashboard_bg.png" || fail "cannot install dashboard_bg.png"
@@ -116,7 +116,7 @@ fi
 
 lipc-set-prop com.lab126.scanner doFullScan 1 >/dev/null 2>&1 || lipc-set-prop com.lab126.scanner triggerUpdate 1 >/dev/null 2>&1 || true
 
-# v2.1：确保 UNINSTALL.sh 在 USB 根且可执行（Vera ;log 只认 runme，卸载由 RUNME.sh 检测 uninstall.flag 触发）
+# v2.2：确保 UNINSTALL.sh 在 USB 根且可执行（Vera ;log 只认 runme，卸载由 RUNME.sh 检测 uninstall.flag 触发）
 [ -f "/mnt/us/UNINSTALL.sh" ] && chmod +x "/mnt/us/UNINSTALL.sh" 2>/dev/null || true
 
 /sbin/initctl stop "$JOB" >/dev/null 2>&1 || true
@@ -147,7 +147,7 @@ trap - EXIT INT TERM HUP
 sleep 2
 if /sbin/initctl status "$JOB" 2>/dev/null | grep -q 'start/running'; then
     echo "$(date): installed and running" | tee -a "$INSTALL_LOG"
-    toast "Yunindex阅读统计 v2.1 installed"
+    toast "Yunindex阅读统计 v2.2 installed"
     export_install_log
     exit 0
 fi
