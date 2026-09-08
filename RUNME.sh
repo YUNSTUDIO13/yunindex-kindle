@@ -14,10 +14,44 @@
 #     · 正常安装  → 直接调 Install-Native-Reading-Time.sh
 #     · 想卸载   → 在 USB 根（/mnt/us/）放一个名为 uninstall.flag 的空文件，
 #                  再 ;log runme，RUNME.sh 检测到标记自动 exec /mnt/us/UNINSTALL.sh
+#     · 想诊断   → 在 USB 根放一个名为 diagnose.flag 的空文件，
+#                  再 ;log runme，RUNME.sh 检测到标记自动 exec /mnt/us/_diagnose.sh
+#                  结果写到 /mnt/us/LOG-diagnose.log（USB 拷回即可）
 #   UNINSTALL.sh 必须在 /mnt/us/（由 Install 末尾同步并 chmod +x），否则报 toaster 失败。
 
 INSTALLER="/mnt/us/native-reading-time-package/Install-Native-Reading-Time.sh"
 LOG="/mnt/us/reading-time/install.log"
+
+# === 诊断模式：根目录存在 diagnose.flag*（任意扩展名）则走诊断 ===
+# 跟 uninstall.flag 同款机制，兼容 macOS 文本编辑器自动加 .rtf/.txt 扩展名。
+DIAG_FLAG=""
+for f in /mnt/us/diagnose.flag*; do
+    if [ -e "$f" ]; then
+        DIAG_FLAG="$f"
+        break
+    fi
+done
+
+if [ -n "$DIAG_FLAG" ]; then
+    mkdir -p /mnt/us/reading-time
+    echo "$(date): RUNME entry (diagnose mode), uid=$(id -u), flag=$DIAG_FLAG, self=$0" >> "$LOG"
+    DIAG=""
+    for c in /mnt/us/_diagnose.sh /mnt/us/native-reading-time-package/_diagnose.sh; do
+        if [ -f "$c" ]; then DIAG="$c"; break; fi
+    done
+    if [ -z "$DIAG" ]; then
+        echo "$(date): ERROR _diagnose.sh not found" >> "$LOG"
+        lipc-set-prop com.lab126.system toasterMessage "_diagnose.sh not found; please reinstall first" >/dev/null 2>&1 || true
+        rm -f /mnt/us/diagnose.flag*
+        exit 1
+    fi
+    chmod +x "$DIAG" 2>/dev/null || true
+    rm -f /mnt/us/diagnose.flag*
+    /bin/sh "$DIAG" >/dev/null 2>&1
+    lipc-set-prop com.lab126.system toasterMessage "Diagnose done: see LOG-diagnose.log on USB root" >/dev/null 2>&1 || true
+    sync
+    exit 0
+fi
 
 # === 卸载模式：根目录存在 uninstall.flag*（任意扩展名）则走卸载 ===
 # 兼容 macOS 上文本编辑器创建标记文件时自动加 .rtf/.txt 扩展名的场景，

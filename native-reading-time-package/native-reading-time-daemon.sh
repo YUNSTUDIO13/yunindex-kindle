@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Kindle 原生阅读时长守护进程 v2.2
+# Kindle 原生阅读时长守护进程 v2.3
 # 事件驱动省电：熄屏/亮屏用 lipc-wait-event 纯事件（零轮询），阅读中每 120s 低频兜底抓"关书不熄屏"，
 #   非阅读亮屏 30s 轮询抓"开书"；启动时自动探测 goingToScreenSaver，不存在则降级回 sleep 轮询（绝不忙循环）
 # 修复版：
@@ -28,6 +28,10 @@ umask 077
 [ -f "$DATA" ] || printf 'date\tbook_id\tseconds\ttitle\tstatus\tprogress\n' > "$DATA"
 # state 文件也兜底一份，避免 dashboard / 外部读取报错
 [ -f "$STATE" ] || printf 'state=等待阅读\npid=\napp=\npower=\nbook_id=\ntitle=\nlast_update=\n' > "$STATE"
+# v2.3：book-meta.tsv 存每本书「开始阅读时间」(first_open)，供排行页「开始阅读时间」字段用；
+# 幂等写入：daemon 检测到「开书」且 book-meta.tsv 无该 bid 时才追加，永不覆盖既有时间戳
+META="$BASE/book-meta.tsv"
+[ -f "$META" ] || printf 'book_id\tfirst_open_epoch\tfirst_open_iso\n' > "$META"
 
 prop() { lipc-get-prop "$1" "$2" 2>/dev/null; }
 
@@ -56,24 +60,56 @@ format_time() {
 }
 
 # 尽力而为地取当前书的阅读进度（0-100）。失败一律返回空，绝不报错退出。
+# v2.3.10：参数改为（cdeKey, 书名）。旧版只用书名精确匹配 p_titles_0_nominal，
+#   一旦书名有空格/标点/副标题差异就匹配不上 → progress 恒为空 → 排行页进度条不显示。
+#   新版优先用 cdeKey（= book_id，来自 getCurrentBookMetadata，与 cc.db 同源）精确匹配，书名仅作兜底。
+#   另外老版 sqlite3 可能不支持 -readonly，两种调用方式都试。
 book_progress() {
-    t="$1"
-    [ -n "$t" ] || { printf ''; return; }
+    id="$1"; t="$2"
     command -v sqlite3 >/dev/null 2>&1 || { printf ''; return; }
     [ -r "$CC_DB" ] || { printf ''; return; }
-    et="$(printf '%s' "$t" | sed "s/'/''/g")"
-    # 关键修复：用 sed 二次校验输出，避免 sqlite3 异常退出码 + 脏数据污染
-    p="$(sqlite3 -readonly -noheader "$CC_DB" \
-        "SELECT CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE p_titles_0_nominal='$et' LIMIT 1" 2>/dev/null | tr -d '[:space:]')"
-    case "$p" in ''|*[!0-9]*) p="";; esac
+    p=""
+    # ① 优先 cdeKey（book_id）匹配
+    if [ -n "$id" ]; then
+        eid="$(printf '%s' "$id" | sed "s/'/''/g")"
+        for _opt in "-readonly" ""; do
+            [ -n "$p" ] && break
+            p="$(sqlite3 $_opt -noheader "$CC_DB" \
+                "SELECT CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE cdeKey='$eid' LIMIT 1" 2>/dev/null | tr -d '[:space:]')"
+            case "$p" in ''|*[!0-9]*) p="";; esac
+        done
+    fi
+    # ② 书名兜底
+    if [ -z "$p" ] && [ -n "$t" ]; then
+        et="$(printf '%s' "$t" | sed "s/'/''/g")"
+        for _opt in "-readonly" ""; do
+            [ -n "$p" ] && break
+            p="$(sqlite3 $_opt -noheader "$CC_DB" \
+                "SELECT CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE p_titles_0_nominal='$et' LIMIT 1" 2>/dev/null | tr -d '[:space:]')"
+            case "$p" in ''|*[!0-9]*) p="";; esac
+        done
+    fi
     printf '%s' "$p"
 }
 
 write_report() {
-    report_total="$(awk -F '\t' 'NR>1&&NF>=4{s+=$3}END{print s+0}' "$DATA" 2>/dev/null)"
-    report_total="${report_total:-0}"
-    report_today="$(awk -F '\t' -v d="$(date +%Y-%m-%d)" 'NR>1&&NF>=4&&$1==d{s+=$3}END{print s+0}' "$DATA" 2>/dev/null)"
-    report_today="${report_today:-0}"
+    # v2.4.0：三遍全扫并一遍（总秒/今日/分书同 pass 聚合），sort 只吃聚合后书目行（≈藏书数）。
+    #   按 bid 聚合、取首个非空书名（与排行 v2.3.32 同口径，不再因 daemon 偶发空书名拆出幻影书）；
+    #   归档行（NF>=7）天然兼容（秒数照旧求和，今日匹配不到老行）。
+    _wr_tf="$REPORT.tot"; _wr_bd="$REPORT.body"
+    awk -F '\t' -v d="$(date +%Y-%m-%d)" -v tf="$_wr_tf" '
+        NR>1 && NF>=4 {
+            total+=$3
+            if($1==d) today_s+=$3
+            if($4!="" && !($2 in ttl)) ttl[$2]=$4
+            bk[$2]+=$3
+        }
+        END {
+            printf "%d\t%d\n", total+0, today_s+0 > tf
+            for(b in bk) printf "%d\t%s\t%s\n", bk[b], ttl[b], b
+        }' "$DATA" 2>/dev/null | sort -nr > "$_wr_bd"
+    report_total="$(cut -f1 "$_wr_tf" 2>/dev/null)"; report_total="${report_total:-0}"
+    report_today="$(cut -f2 "$_wr_tf" 2>/dev/null)"; report_today="${report_today:-0}"
     {
         echo "Kindle 原生阅读时长统计"
         echo "更新时间：$(date)"
@@ -84,16 +120,15 @@ write_report() {
         echo "累计阅读：$(format_time "$report_total")"
         echo
         echo "按书籍统计："
-        awk -F '\t' 'NR>1&&NF>=4{k=$2 SUBSEP $4;s[k]+=$3}END{for(k in s){split(k,a,SUBSEP);print s[k]"\t"a[2]"\t"a[1]}}' "$DATA" 2>/dev/null \
-            | sort -nr \
-            | awk -F '\t' '{h=int($1/3600);m=int(($1%3600)/60);s=$1%60;if(h>0)t=h"h "m"m";else if(m>0)t=m"m "s"s";else t=s"s";print "- "$2": "t" ("$3")"}'
+        awk -F '\t' '{h=int($1/3600);m=int(($1%3600)/60);s=$1%60;if(h>0)t=h"h "m"m";else if(m>0)t=m"m "s"s";else t=s"s";print "- "$2": "t" ("$3")"}' "$_wr_bd" 2>/dev/null
     } > "$REPORT.tmp" 2>/dev/null && mv "$REPORT.tmp" "$REPORT" 2>/dev/null || true
+    rm -f "$_wr_tf" "$_wr_bd"
 }
 
 bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
 flush() {
     if [ "$bucket" -gt 0 ] && [ -n "$bucket_id" ]; then
-        prog="$(book_progress "$bucket_title")"
+        prog="$(book_progress "$bucket_id" "$bucket_title")"
         st="reading"
         [ "$prog" = "100" ] && st="finished"
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$bucket_date" "$bucket_id" "$bucket" "$bucket_title" "$st" "$prog" >> "$DATA" 2>/dev/null || true
@@ -161,7 +196,7 @@ if command -v lipc-wait-event >/dev/null 2>&1; then
     [ $((_gs_t1-_gs_t0)) -ge 1 ] && HAS_GS=1
 fi
 previous="$(date +%s)"; was_reader=0; current_id=""; current_title=""; service_state="等待阅读"; last_state=""; last_state_write=0
-echo "$(date): upstart service started, pid=$$, timing=event-driven-reader-active-screen, model=v2.2-6col, goingToScreenSaver=$HAS_GS" >> "$LOG"
+echo "$(date): upstart service started, pid=$$, timing=event-driven-reader-active-screen, model=v2.4-6col(归档行7col由launcher生成), goingToScreenSaver=$HAS_GS" >> "$LOG"
 write_report
 
 while :; do
@@ -184,6 +219,15 @@ while :; do
         fi
         if [ "$was_reader" -eq 0 ]; then
             add_edge_credit "$delta" "$current_id" "$current_title" "$today"
+            # v2.3：首次进入 reader app，写 first_open 到 book-meta.tsv（幂等：仅在该 bid 尚未存在时追加）
+            if [ -n "$book_id" ] && [ "$book_id" != "unknown" ]; then
+                existing=$(awk -F'\t' -v b="$book_id" '$1==b{print; exit}' "$META" 2>/dev/null)
+                if [ -z "$existing" ]; then
+                    fo_epoch=$(date +%s)
+                    fo_iso=$(date -d "@$fo_epoch" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)
+                    printf '%s\t%s\t%s\n' "$book_id" "$fo_epoch" "$fo_iso" >> "$META" 2>/dev/null || true
+                fi
+            fi
         fi
     elif [ "$power" != "active" ]; then
         interval="$LOCKED_INTERVAL"

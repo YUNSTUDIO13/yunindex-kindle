@@ -171,7 +171,15 @@ def load_rows(path):
                 except Exception:
                     prog = 0
                 st = parts[4].strip() if parts[4] else "reading"
-            rows.append({"date": d, "bid": bid, "sec": sec, "prog": prog, "st": st})
+            # v2.4.0：归档行（第 7 列=当月阅读日清单）展开 → 天数/streak 逐日精确
+            days = None
+            if len(parts) >= 7 and parts[6]:
+                days = []
+                for x in parts[6].split(","):
+                    x = x.strip()
+                    if x.isdigit():
+                        days.append(f"{d[:7]}-{int(x):02d}")
+            rows.append({"date": d, "bid": bid, "sec": sec, "prog": prog, "st": st, "days": days})
     return rows
 
 
@@ -205,7 +213,14 @@ def metric_week(rows, today, ws, we):
 
 
 def metric_streak(rows, today):
-    read = set(r["date"] for r in rows if r["sec"] > 0)
+    read = set()
+    for r in rows:
+        if r["sec"] <= 0:
+            continue
+        if r["days"]:
+            read.update(r["days"])
+        else:
+            read.add(r["date"])
     try:
         y, m, d = int(today[:4]), int(today[5:7]), int(today[8:10])
     except Exception:
@@ -235,7 +250,10 @@ def metric_year(rows, hyear):
             continue
         if r["sec"] > 0:
             S += r["sec"]
-            DAYS.add(r["date"])
+            if r["days"]:
+                DAYS.update(r["days"])
+            else:
+                DAYS.add(r["date"])
             if r["bid"] in fin:
                 FB.add(r["bid"])
             else:
@@ -372,14 +390,14 @@ def draw_dashboard(img, rows, today, ws, we, hyear, quote):
             # 黑色实柱（衬线风统一墨色，避免多色干扰）
             d.rectangle([x, bar_top, x + sq, bar_y_bot], fill=INK)
             # R35：柱顶数字 18pt 完全画在柱顶之外（lbl_cy = bar_top - 28，bottom = bar_top - 16，远离柱体）
-            # 皇上要求"不需要背景图底色"：不再画白底矩形，水印(218,218,218)很浅不影响阅读
+            # 按需求"不需要背景图底色"：不再画白底矩形，水印(218,218,218)很浅不影响阅读
             lbl = fmt_hm(sec)
             f_lbl = fr(18, bold=True)
             lbl_cx = x + sq // 2
             lbl_cy = bar_top - 28  # 上移确保 18pt 文字完全在柱顶之外
             d.text((lbl_cx, lbl_cy), lbl, font=f_lbl, fill=INK, anchor="mm")
 
-    # R45：已移除"合计"（皇上确认不需要展示）
+    # R45：已移除"合计"（已确认不需要展示）
     # else: sum(sec7) <= 0 则不画柱（按设计稿 19.45.37"无数据态"）
 
     # === 4) 本年统计四卡：累计时长 / 累计阅读 / 在读书籍 / 完成阅读（左对齐）===

@@ -13,7 +13,7 @@ JOB="native-reading-time"
 CONF="/etc/upstart/${JOB}.conf"
 DAEMON="$BASE/bin/native-reading-time-daemon.sh"
 VIEWER="/mnt/us/documents/Yunindex阅读统计.sh"
-# v13.1 R28：恢复右上角「退出按钮」——touch.lua 热区 (1130,35)-(1222,127) → exit。
+# v13.1 R28：恢复右上角「退出按钮」——touch.lua 热区 (1140,60)-(1230,180) → exit（v2.4.1 对齐 × 圆心 1180,120）。
 # 配合 timeout 60 秒空闲自动退出（不再无限常驻，避免下拉状态栏永久卡死）。
 TOUCH_READER="$BASE/bin/reading-insights-touch.lua"
 FONT_DIR="$BASE/fonts"
@@ -25,7 +25,7 @@ export_install_log() { [ -f "$INSTALL_LOG" ] && cp "$INSTALL_LOG" "/mnt/us/LOG-i
 fail() { echo "$(date): ERROR: $1" | tee -a "$INSTALL_LOG"; export_install_log; toast "Installation failed: $1"; exit 1; }
 
 mkdir -p "$BASE"
-echo "$(date): installer v2.2 (single-page / no-touch / SerifSC-only) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
+echo "$(date): installer v2.4.2 (counted-flash) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
 
 # ;log runme 必须以 root 调用
 [ "$(id -u)" -eq 0 ] || fail "not running as root; use ;log runme"
@@ -69,8 +69,10 @@ killall reading-insights-server.sh >/dev/null 2>&1 || true
 # v13.0：安装单页 dashboard 资源（背景 PNG + 书封面 cover.png + compose.py + 金句 tsv）
 # v2.2：书封面 cover.png 必须【先于】launcher 复制就位——launcher 头部 # Icon: 指向 cover.png，
 #       若 launcher 先落地、封面后到，SH_Integration 首次索引时读不到 Icon → 图书馆无封面。
+# v2.3：新增 ranking_bg.png（阅读排行页底图），与 dashboard_bg.png 同目录
 mkdir -p "$UI_DIR" || fail "cannot create UI directory"
 cp "$PKG/ui/dashboard_bg.png" "$UI_DIR/dashboard_bg.png" || fail "cannot install dashboard_bg.png"
+cp "$PKG/ui/ranking_bg.png" "$UI_DIR/ranking_bg.png" || fail "cannot install ranking_bg.png"
 cp "$PKG/ui/cover.png" "$UI_DIR/cover.png" || fail "cannot install cover.png"
 cp "$PKG/ui/compose.py" "$UI_DIR/compose.py" || fail "cannot install compose.py"
 cp "$PKG/ui/quotes.tsv" "$UI_DIR/quotes.tsv" || fail "cannot install quotes.tsv"
@@ -119,6 +121,12 @@ lipc-set-prop com.lab126.scanner doFullScan 1 >/dev/null 2>&1 || lipc-set-prop c
 # v2.2：确保 UNINSTALL.sh 在 USB 根且可执行（Vera ;log 只认 runme，卸载由 RUNME.sh 检测 uninstall.flag 触发）
 [ -f "/mnt/us/UNINSTALL.sh" ] && chmod +x "/mnt/us/UNINSTALL.sh" 2>/dev/null || true
 
+# v2.3.9：诊断脚本同步到 USB 根（RUNME.sh 检测 diagnose.flag 触发，结果写 /mnt/us/LOG-diagnose.log）
+# 注意：不放进 $BASE（/mnt/us/reading-time）以免被误当数据目录清理；USB 根方便用户拷回日志。
+if [ -f "$PKG/_diagnose.sh" ]; then
+    cp "$PKG/_diagnose.sh" "/mnt/us/_diagnose.sh" 2>/dev/null && chmod 755 "/mnt/us/_diagnose.sh" 2>/dev/null || true
+fi
+
 /sbin/initctl stop "$JOB" >/dev/null 2>&1 || true
 
 ROOT_RW=0
@@ -147,7 +155,7 @@ trap - EXIT INT TERM HUP
 sleep 2
 if /sbin/initctl status "$JOB" 2>/dev/null | grep -q 'start/running'; then
     echo "$(date): installed and running" | tee -a "$INSTALL_LOG"
-    toast "Yunindex阅读统计 v2.2 installed"
+    toast "Yunindex阅读统计 v2.4 installed"
     export_install_log
     exit 0
 fi

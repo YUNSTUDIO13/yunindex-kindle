@@ -1,7 +1,7 @@
 # Yunindex · Kindle 阅读统计插件
 
 > Kindle Paperwhite 6 (KPW6) 原生阅读时长统计面板，基于 **Vera 越狱**。
-> **真实逐秒计时 · 事件驱动省电 · 单页 dashboard**。
+> **真实逐秒计时 · 事件驱动省电 · 双页面板（指标 + 阅读排行）**。
 
 ---
 
@@ -10,7 +10,10 @@
 - **真实逐秒计时**：阅读器处于活跃前台 + 屏幕点亮时逐秒累积；熄屏暂停、关书停止、换书继续。
 - **事件驱动 daemon**：熄屏 / 亮屏走 `lipc-wait-event` 通道，非阅读时段近乎零耗电。
 - **自动降级**：若设备不支持 `goingToScreenSaver`，自动退回轮询模式，照常计时，绝不卡屏。
-- **单页 dashboard**：9 个核心指标 + 周节奏柱状图 + 高亮金句按月轮播 + 年份切换。
+- **指标页 dashboard**：9 个核心指标 + 周节奏柱状图 + 高亮金句按月轮播 + 年份切换。
+- **阅读排行页 ranking**：封面 / 书名 / 作者 / 起止时间 / 进度条 / 累计时长 / 日均，时长·日均双排序 + 翻页。
+- **极速渲染**：字体子集化（GB2312 全表 8025 字形，保留 hinting）+ 零 fork 渲染循环，排行页翻页秒开。
+- **跨年归档（v2.4）**：90 天前明细自动折叠为「月份×每书」归档行（保留当月阅读日清单），折叠前后 总秒数 / 各年秒数 / 各年天数 逐项校验，不等即自动回滚；长年重度使用不卡顿。
 - **高亮句解析**：兼容 UTF-8 BOM 的 `My Clippings.txt`，按时间倒序轮播。
 - **数据零丢失**：升级自动备份 `reading-time.tsv`；卸载保留用户数据。
 - **纯本地运行**：不联网，无任何外发请求。
@@ -39,16 +42,18 @@ yunindex-kindle/
 ├─ uninstall.flag                        # 卸载信号（与 UNINSTALL.sh 一起拖到根目录 → ;log runme）
 ├─ 安装说明.txt / 卸载说明.txt
 └─ native-reading-time-package/
-   ├─ Yunindex阅读统计.sh                # dashboard 渲染（busybox awk + fbink）
+   ├─ Yunindex阅读统计.sh                # 双页渲染（busybox awk + fbink）
    ├─ native-reading-time-daemon.sh      # Upstart 守护进程（事件驱动）
    ├─ Install-Native-Reading-Time.sh     # 安装脚本
-   ├─ reading-insights-touch.lua         # 触摸监听（年份切换 + 2 分钟超时退出）
+   ├─ reading-insights-touch.lua         # 触摸监听（切页/翻页/排序 + 2 分钟超时退出）
    ├─ native-reading-time.conf           # daemon 配置
+   ├─ NotoSerifSC-Regular.otf            # 中文 Serif（子集化嵌入，含 hinting）
+   ├─ NotoSerifSC-Bold.otf               # 中文 Serif Bold（子集化嵌入，含 hinting）
+   ├─ subset_fonts.py                    # 字体子集化生成器（打包期用，可复现）
    ├─ generate_bg.py                     # FAST 路径背景图生成
    ├─ ui/compose.py                      # 背景合版
-   ├─ ui/dashboard_bg.png                # 仪表板静态背景（已嵌入「Yunindex阅读统计」标题）
-   ├─ fonts/NotoSansSC-Regular.otf       # 中文 Sans（嵌入）
-   ├─ fonts/NotoSerifSC-Bold.otf         # 中文 Serif Bold（嵌入）
+   ├─ ui/dashboard_bg.png                # 指标页静态背景
+   ├─ ui/ranking_bg.png                  # 排行页静态背景
    ├─ ui/cover.png                       # 脚本封面（图书馆显示为带封面的书）
    └─ ui/quotes.tsv                      # 高亮金句数据
 ```
@@ -98,7 +103,13 @@ yunindex-kindle/
 
 ## 📦 版本
 
-- **v2.2（当前）**：卸载信号文件 `uninstall.flag` 随仓库分发；卸载默认保留阅读数据（重装自动续用）；图书馆显示脚本封面。
+- **v2.4.2（当前）**：计数制 flash——每 5 次渲染强制清屏一次（Kindle 原生书籍同款），闪屏频率 100%→20% 且残影有界不糊；退出反馈改为 × 按钮局部反色，不闪全屏。
+- **v2.4.1**：关闭按钮热区对齐 × 视觉圆心（修复下半圆区域点击无效的连戳问题）。
+- **v2.4.0**：跨年归档（90 天前明细折叠为「月份×每书」7 列归档行，含日清单，每月至多一次）+ 迁移自检自动回滚兜底；后台报告三扫并一；backfill / 面板计算 / 排行缓存与归档行全兼容；排行并列确定性排序。
+- **v2.3.35~37**：排行行内布局重排（序号移封面左侧、字号最大至 38pt）；序号跨页连续编号；四日志超 200KB 自动截断；封面路径含空格修复。
+- **v2.3.34**：字体子集化（每次文字渲染字体 IO 24MB→5.3MB，排行页 ~8s→~3s）；渲染循环零 fork 瘦身；最终刷新恢复 `-f` flash 单次全刷，根治切页残影发糊。
+- **v2.3**：新增阅读排行页（ranking）；封面走 cc.db `p_thumbnail` 权威来源；双页 tab 切换。
+- **v2.2**：卸载信号文件 `uninstall.flag` 随仓库分发；卸载默认保留阅读数据（重装自动续用）；图书馆显示脚本封面。
 - **v2.1**：修复 dashboard 打开时「闪屏两次才显示数据」的问题——渲染改单次 GC16 全刷，打开即直接显示完整数据。
 - **v2.0**：品牌改名 `Yunindex`；daemon 升级到事件驱动版；单页 dashboard。
 - **v1.x**：原始版本未命名，daemon 轮询版，dashboard 双页布局。
@@ -117,10 +128,12 @@ yunindex-kindle/
 **修复**：
 
 - 推背景加 `-b`：只写 framebuffer 不刷屏；
-- commit 去掉 `-f` flash：只保留单次 `-W GC16 -s` 灰度全刷；
+- commit 合并为单次刷新；
 - FAST 路径同步合并为单次「推图 + GC16 全刷」。
 
-**效果**：慢 / 快路径都从「多次闪屏」降为「单次 GC16 全刷」（e-ink 清残影必需的一次闪），打开即显示完整数据。
+**效果**：慢 / 快路径都从「多次闪屏」降为「单次全刷」，打开即显示完整数据。
+
+> ⚠️ v2.3.34 起最终刷新恢复 `-f`（即 `-f -W GC16 -s` 单命令）：实测 KPW6 上无 flash 的 GC16 清不掉切页残影（翻页渐糊）。单命令 `-f + GC16` 只是一次标准全刷，与 v2.1 的「两条独立刷新命令叠加双闪」不同。
 
 ---
 
@@ -141,7 +154,7 @@ yunindex-kindle/
 daemon 启动时会把模型版本写入 `/mnt/us/reading-time/service.log` 首行：
 
 ```
-... model=v2.2-6col, goingToScreenSaver=1 ...
+... model=v2.4-6col, goingToScreenSaver=1 ...
 ```
 
 - `goingToScreenSaver=1` → **事件路径已生效**（省电 7~8 倍）。

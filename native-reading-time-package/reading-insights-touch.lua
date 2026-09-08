@@ -1,5 +1,6 @@
--- Yunindex阅读统计 v2.2 触摸热区：与 Yunindex阅读统计.sh 的绘制坐标严格对应。
+-- Yunindex阅读统计 v2.3 触摸热区：与 Yunindex阅读统计.sh 的绘制坐标严格对应。
 -- 仅观测 evdev，无 EVIOCGRAB / eatTapMode / 不写设备。
+-- v2.3：arg[3]=page（dashboard|ranking），按 page 返回不同热区集
 --
 -- 修正说明（依据 KPW6 实机诊断）：
 --   KPW6 = armv7l 32 位架构（kernel 5.15 但 32 位用户态），
@@ -9,8 +10,8 @@
 
 local device   = arg[1] or "/dev/input/event1"
 local log_path = arg[2] or "/mnt/us/reading-time/dashboard-touch.log"
-local mode     = arg[3] or "core"          -- core | history
-local htab     = arg[4] or "month"         -- month | year | total
+local page     = arg[3] or "dashboard"   -- v2.3: dashboard | ranking
+-- v2.3.35: 删 htab 死参数（arg[4] 历史上从未参与任何热区判断，launcher 传值无害）
 local origin_x = tonumber(arg[5] or "0") or 0
 local origin_y = tonumber(arg[6] or "0") or 0
 local view_w   = tonumber(arg[7] or "1272") or 1272
@@ -47,13 +48,34 @@ local function inside(px, py, left, top, right, bottom)
 end
 
 local function action_for_logical(px, py)
-    -- 关闭（右上角按钮）
-    if inside(px, py, 1130, 35, 1222, 127) then return "exit" end
-    -- 年份切换（底部 < 2026 > 按钮，R34 单页版坐标：与 generate_bg.py 按钮框一致）
-    -- 按钮框 ar_w=90 ar_h=65 ar_gap=16 ar_total=302 ar_x1=910 ar_y0=1525
-    -- < 按钮 [910,1000]，> 按钮 [1122,1212]，y [1525,1590]
-    if inside(px, py, 900, 1515, 1010, 1595) then return "period_prev" end
-    if inside(px, py, 1110, 1515, 1220, 1595) then return "period_next" end
+    -- 关闭（右上角按钮，两页共用）
+    -- v2.4.1：热区对齐 × 视觉圆心 (1180,120)。旧热区 y≤127 把圆的下半 21px 漏在区外，
+    --   瞄圆心戳时常判空（需连戳）；新区 90×120 正压圆心，左界 1140 避开排序胶囊(x≤1130)。
+    if inside(px, py, 1140, 60, 1230, 180) then return "exit" end
+
+    if page == "ranking" then
+        -- 排行页热区（v2.3）
+        -- 左下 tab：「指标」[80,1545,300,1625] → goto_dashboard
+        if inside(px, py, 80, 1545, 300, 1625) then return "goto_dashboard" end
+        -- 左下 tab：「排行」[320,1545,540,1625] → goto_ranking（点自己 noop）
+        if inside(px, py, 320, 1545, 540, 1625) then return "goto_ranking" end
+        -- 右下翻页 ‹ [820,1545,930,1625]
+        if inside(px, py, 820, 1545, 930, 1625) then return "rank_prev" end
+        -- 右下翻页 › [1080,1545,1190,1625]
+        if inside(px, py, 1080, 1545, 1190, 1625) then return "rank_next" end
+        -- 排序胶囊 [890,90,1130,150] → rank_toggle_sort（切时长/日均；v7 缩短+上提对齐关闭按钮）
+        if inside(px, py, 890, 90, 1130, 150) then return "rank_toggle_sort" end
+        return nil
+    end
+
+    -- dashboard 页热区（原 v2.2 单页版 + v2.3 左下 tab）
+    -- 年份切换胶囊（v2.3: 与 ranking 翻页同款单胶囊 [820,1545,1190,1625]，‹ 左半 / › 右半）
+    if inside(px, py, 820, 1545, 930, 1625) then return "period_prev" end
+    if inside(px, py, 1080, 1545, 1190, 1625) then return "period_next" end
+    -- 左下 tab：「指标」[80,1545,300,1625]（点自己 noop → goto_dashboard）
+    if inside(px, py, 80, 1545, 300, 1625) then return "goto_dashboard" end
+    -- 左下 tab：「排行」[320,1545,540,1625] → goto_ranking
+    if inside(px, py, 320, 1545, 540, 1625) then return "goto_ranking" end
     return nil
 end
 
@@ -71,8 +93,8 @@ local function action_for_physical(px, py)
     return action
 end
 
-note(string.format("touch watcher v2.2 device=%s mode=%s htab=%s viewport=%dx%d+%d+%d evsize=16B (fixed)",
-    device, mode, htab, view_w, view_h, origin_x, origin_y))
+note(string.format("touch watcher v2.3 device=%s page=%s viewport=%dx%d+%d+%d evsize=16B (fixed)",
+    device, page, view_w, view_h, origin_x, origin_y))
 
 while true do
     local event = f:read(EV_SIZE)

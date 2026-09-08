@@ -99,9 +99,15 @@ run rm -rf "$BASE/bin"
 run rm -rf "$BASE/fonts"
 run rm -rf "$BASE/ui"
 run rm -f  "$BASE/service.log" "$BASE/install.log" "$BASE/upstart.log" \
-           "$BASE/dashboard-launch.log" "$BASE/dashboard-touch.log" "$BASE/fbink.log"
+           "$BASE/dashboard-launch.log" "$BASE/dashboard-touch.log" "$BASE/fbink.log" \
+           "$BASE/rank-debug.log"
+run rm -f  "$BASE/.rank_all.tsv" "$BASE/.cc_all.tsv" "$BASE/.cover_map.tsv" \
+           "$BASE/.uuid_map.tsv" "$BASE/.fast_python" "$BASE/.progress_cache" \
+           "$BASE/.archive_done" "$BASE/.calc_cache" "$BASE/.backfill_key"
 run rm -rf "$PKG"
-run rm -f  "/mnt/us/LOG-install.log"
+run rm -f  "/mnt/us/LOG-install.log" "/mnt/us/LOG-dashboard-launch.log" \
+           "/mnt/us/LOG-fbink.log" "/mnt/us/LOG-dashboard-touch.log" \
+           "/mnt/us/LOG-archive.log" "/mnt/us/LOG-diagnose.log" "/mnt/us/_diagnose.sh"
 
 # 旧版残留清理（保险）
 run rm -f "/mnt/us/documents/书籍进度探测.sh"
