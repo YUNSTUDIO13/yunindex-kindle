@@ -24,7 +24,7 @@
 
 | 时段 | 轮询 | 事件驱动 | 提升 |
 |---|---|---|---|
-| 阅读中 CPU 唤醒 | 每 15 秒一次 | 120 秒兜底 + 熄屏事件触发 | **~8×** |
+| 阅读中 CPU 唤醒 | 每 15 秒一次 | 60 秒兜底 + 熄屏事件触发 | **~4×** |
 | 非阅读 CPU 唤醒 | 每 15 秒一次 | 几乎为零（事件触发） | **~20×** |
 | 综合省电 | 基线 | 降频 + date 单次 fork | **7~8×** |
 | 计时精度 | 15 秒采样 | 按真实 delta 累加 | **不变** |
@@ -42,20 +42,23 @@ yunindex-kindle/
 ├─ uninstall.flag                        # 卸载信号（与 UNINSTALL.sh 一起拖到根目录 → ;log runme）
 ├─ 安装说明.txt / 卸载说明.txt
 └─ native-reading-time-package/
-   ├─ Yunindex阅读统计.sh                # 双页渲染（busybox awk + fbink）
+   ├─ Yunindex阅读统计.sh                # 双页渲染（busybox awk + fbink，v2.5 起单路径）
    ├─ native-reading-time-daemon.sh      # Upstart 守护进程（事件驱动）
    ├─ Install-Native-Reading-Time.sh     # 安装脚本
+   ├─ _diagnose.sh                       # 诊断脚本（USB 根放 diagnose.flag → ;log runme）
    ├─ reading-insights-touch.lua         # 触摸监听（切页/翻页/排序 + 2 分钟超时退出）
    ├─ native-reading-time.conf           # daemon 配置
    ├─ NotoSerifSC-Regular.otf            # 中文 Serif（子集化嵌入，含 hinting）
    ├─ NotoSerifSC-Bold.otf               # 中文 Serif Bold（子集化嵌入，含 hinting）
-   ├─ subset_fonts.py                    # 字体子集化生成器（打包期用，可复现）
-   ├─ generate_bg.py                     # FAST 路径背景图生成
-   ├─ ui/compose.py                      # 背景合版
+   ├─ generate_bg.py                     # 指标页背景图生成器（打包期用）
+   ├─ generate_ranking_bg.py             # 排行页背景图生成器（打包期用）
    ├─ ui/dashboard_bg.png                # 指标页静态背景
    ├─ ui/ranking_bg.png                  # 排行页静态背景
    ├─ ui/cover.png                       # 脚本封面（图书馆显示为带封面的书）
+   ├─ ui/book.png                        # 排行页书籍封面占位图（可同名替换自定义）
    └─ ui/quotes.tsv                      # 高亮金句数据
+
+字体子集化生成器 subset_fonts.py 位于仓库根（打包期用，可复现）。
 ```
 
 > 字体嵌入是为 Kindle 上无中文字体可用做的兜底；其他 Kindle 型号可忽略。
@@ -103,7 +106,8 @@ yunindex-kindle/
 
 ## 📦 版本
 
-- **v2.4.2（当前）**：计数制 flash——每 5 次渲染强制清屏一次（Kindle 原生书籍同款），闪屏频率 100%→20% 且残影有界不糊；退出反馈改为 × 按钮局部反色，不闪全屏。
+- **v2.5（当前）**：并发根因大修——Vera/KPM 偶发同秒重复拉起 launcher 曾致排行缓存竞态写坏（排行整页空白）、旧实例僵死滞留（点图标闪退打不开，只能锁屏恢复）；现 mkdir 原子锁「后来者接管」+ 缓存原子写 + 坏缓存自愈三重防线。计时精度大修：阅读中落账 120s→60s、边缘补偿合理化（开书 15s/合书 30s 封顶）、写成功才清零，实测 9 分钟阅读入账 485s→530s。排行日均定格：分母改「末读日−首读日+1」，读完的书日均不再随时间稀释。移除全部 python 死路径（KPW6/Vera 无 python3），统一 awk+fbink 单路径；日志全量收进 USB 根 `debug.flag` 开关，默认零噪音；排行无封面书自动用 `ui/book.png` 占位（可替换）。
+- **v2.4.2**：计数制 flash——每 5 次渲染强制清屏一次（Kindle 原生书籍同款），闪屏频率 100%→20% 且残影有界不糊；退出反馈改为 × 按钮局部反色，不闪全屏。
 - **v2.4.1**：关闭按钮热区对齐 × 视觉圆心（修复下半圆区域点击无效的连戳问题）。
 - **v2.4.0**：跨年归档（90 天前明细折叠为「月份×每书」7 列归档行，含日清单，每月至多一次）+ 迁移自检自动回滚兜底；后台报告三扫并一；backfill / 面板计算 / 排行缓存与归档行全兼容；排行并列确定性排序。
 - **v2.3.35~37**：排行行内布局重排（序号移封面左侧、字号最大至 38pt）；序号跨页连续编号；四日志超 200KB 自动截断；封面路径含空格修复。
@@ -151,7 +155,8 @@ yunindex-kindle/
 
 ## 🧪 真机验证
 
-daemon 启动时会把模型版本写入 `/mnt/us/reading-time/service.log` 首行：
+v2.5 起日志默认全静默。排障时在 **USB 根目录放一个 `debug.flag` 空文件**，即可恢复全部日志
+（launch / rank-debug / 触摸 / daemon 启动行）；daemon 启动行会写入 `/mnt/us/reading-time/service.log`：
 
 ```
 ... model=v2.4-6col, goingToScreenSaver=1 ...
