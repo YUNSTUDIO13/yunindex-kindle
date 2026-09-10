@@ -116,6 +116,25 @@ echo "【12. reading-time.tsv 原始前 8 行（看 progress 第 6 列是否有�
 sed 's/^/    | /' "$BASE/reading-time.tsv" 2>/dev/null | head -8
 
 echo ""
+echo "【13. 退出回图书馆链路（v2.4.4 定位用）】"
+echo "  sqlite3 可用: $(command -v sqlite3 2>/dev/null || echo NONE)"
+echo "  appreg.db 可读: $([ -r /var/local/appreg.db ] && echo YES || echo NO)"
+echo "  launcher 版本标记:"
+grep -o "v2\.4\.[0-9]" "$LAUNCHER" 2>/dev/null | sort -u | awk '{printf "    | %s\n", $0}'
+grep -c "booklet%library" "$LAUNCHER" 2>/dev/null | awk '{printf "    | 动态探测代码存在: %s 处\n", $1}'
+if command -v sqlite3 >/dev/null 2>&1 && [ -r /var/local/appreg.db ]; then
+    echo "  appreg.db 全部 booklet handlerId:"
+    sqlite3 -readonly -noheader /var/local/appreg.db \
+        "SELECT handlerId FROM handlerIds WHERE handlerId LIKE '%booklet%' ORDER BY handlerId" 2>&1 | awk '{printf "    | %s\n", $0}'
+    echo "  LIKE %booklet%library% 命中:"
+    sqlite3 -readonly -noheader /var/local/appreg.db \
+        "SELECT handlerId FROM handlerIds WHERE handlerId LIKE '%booklet%library%' ORDER BY handlerId LIMIT 1" 2>&1 | awk '{printf "    | %s\n", $0}'
+    echo "  （无输出行 = 该固件无独立图书馆 booklet）"
+fi
+echo "  最近退出日志（lib_id 行）:"
+grep "exit →" "$BASE/dashboard-launch.log" 2>/dev/null | tail -5 | awk '{printf "    | %s\n", $0}'
+
+echo ""
 echo "=========================================="
 echo "诊断完成。请把整段输出发给维护者排查。"
 echo "=========================================="

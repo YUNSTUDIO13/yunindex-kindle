@@ -36,8 +36,8 @@
 #   ⑥ dashboard：12×echo|awk → IFS tab set --；fmt_hm/SEC7 求和改纯内建算术。
 #   封面查询链路（COVER_MAP/UUID_MAP/多路径 fallback）与 v2.3.23/32 逐字节一致，未动。
 # 架构：
-#   FAST（设备有 python3 + Pillow）：compose.py 整页合成 → fbink -g 推 1 次
-#   慢路径（无 PIL，纯 fbink）：推背景 PNG → fbink 多次 -t/-k 叠加数字与柱体
+#   v2.5 起单路径（纯 fbink）：推背景 PNG → fbink 多次 -t/-k 叠加数字与柱体
+#   （原 python3+PIL 整页合成快通道已移除：KPW6/Vera 5.19.03 无 python3，从未执行）
 # 坐标体系：logical 1272x1696（与 background PNG 同源），由 fbink -g 自动缩放。
 # 字体：Noto Serif SC 衬线体（与效果图一致）
 #
@@ -68,12 +68,42 @@ for _lf in "$LOG" "$BASE/fbink.log" "$BASE/rank-debug.log" "$BASE/dashboard-touc
     fi
 done
 exec >> "$LOG" 2>&1
+
+# v2.5：单实例锁「后来者接管」——Vera/KPM 偶发同秒重复拉起 launcher（真机 rank-debug 实锤：
+#   rank_start/dashboard_start 同时间戳成对）；并发双跑竞态 RANK_CACHE.tmp → 缓存写成仅 header
+#   → 排行整页空白。更甚者旧实例 EXIT trap 卡在 lipc 阻塞里僵死滞留 → KPM 认为 scriptlet 仍在运行，
+#   再点图标闪一下回主页、永不 exec 新进程，只能锁屏重置。
+#   故：旧 PID 存活时一律 kill 接管（误启的多余实例/僵死实例都该杀；杀触发旧实例 EXIT trap，
+#   顺带完成 restore_system_ui）。PID 复用误判概率极低，且 launcher 是交互短会话，杀错代价可接受。
+LOCK_FILE="$BASE/.launcher.pid"
+LOCK_DIR="$BASE/.launcher.lock"
+_tries=0
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    _old_pid="$(cat "$LOCK_FILE" 2>/dev/null)"
+    if [ -n "$_old_pid" ] && [ "$_old_pid" != "$$" ] && kill -0 "$_old_pid" 2>/dev/null; then
+        kill "$_old_pid" 2>/dev/null
+        _w=0
+        while [ "$_w" -lt 3 ] && kill -0 "$_old_pid" 2>/dev/null; do
+            sleep 1; _w=$((_w+1))
+        done
+        kill -0 "$_old_pid" 2>/dev/null && kill -9 "$_old_pid" 2>/dev/null
+    fi
+    # 走到这旧实例已死透（trap 已跑完，含其锁清理）或被 -9（无 trap）：强制清残留再抢锁
+    rm -rf "$LOCK_DIR" 2>/dev/null
+    _tries=$((_tries+1))
+    [ "$_tries" -ge 3 ] && break   # 兜底：宁可放行也不让用户打不开
+done
+printf '%s\n' "$$" > "$LOCK_FILE" 2>/dev/null || true
+
 echo "$(date): v2.3 dual-page (dashboard+ranking) launch, uid=$(id -u)"
 
 FBINK_LOG="$BASE/fbink.log"
 UI_DIR="$BASE/ui"
 BASE_BG="$UI_DIR/dashboard_bg.png"
 BASE_QUOTES="$UI_DIR/quotes.tsv"
+# v2.4.3：排行页封面占位图——书籍封面搜索落空时统一显示。
+#   用户可替换：① 安装包 ui/book.png（同名覆盖后重装）；② 设备上 /mnt/us/reading-time/ui/book.png（直接覆盖，下回渲染即生效）
+BOOK_PLACEHOLDER="$UI_DIR/book.png"
 # v2.3.12：字体路径探测（真机「毫无变化」根因：MAC 打包字体在包根目录，旧版写死 $BASE/fonts/，
 #   真机 regular=$RFONT 指向不存在/损坏文件 → fbink 加载 regular 槽字体失败 → 常规字整条静默不画；
 #   BOLD 走 bold=$BFONT 槽能出。现同时探测 fonts/ 子目录与包根两种布局，且 regular 槽
@@ -84,7 +114,6 @@ for _c in "$FONT_DIR/NotoSerifSC-Bold.otf" "$BASE/NotoSerifSC-Bold.otf"; do [ -f
 for _c in "$FONT_DIR/NotoSerifSC-Regular.otf" "$BASE/NotoSerifSC-Regular.otf"; do [ -f "$_c" ] && { RFONT="$_c"; break; }; done
 [ -z "$RFONT" ] && RFONT="$BFONT"
 [ -z "$BFONT" ] && BFONT="$RFONT"
-PNG_TMP="$BASE/.tmp_dashboard.png"
 
 # 坐标：v2.3.35 删 scale_y/scale_x 死代码（KPW6 viewport=1272x1696 与 logical 1:1，自
 #   v2.3.32 起无人调用；若未来换机型分辨率非 1:1，需重新加坐标缩放）
@@ -234,7 +263,7 @@ restore_system_ui() {
     lipc-set-prop com.lab126.winmgr hideStatusBar 0 >/dev/null 2>&1 || true
     lipc-set-prop com.lab126.powerd preventScreenSaver 0 >/dev/null 2>&1 || true
 }
-trap restore_system_ui EXIT INT TERM HUP
+trap 'rm -rf "$LOCK_DIR" "$LOCK_FILE"; restore_system_ui' EXIT INT TERM HUP
 
 # 必备资源检查
 [ -x "$FBINK" ] || { echo "FBInk not found at $FBINK"; exit 1; }
@@ -287,72 +316,7 @@ year_next() {
 }
 YEARS="$(years_sorted)"
 
-# ============================================================
-# FAST 探测：找一个能 import PIL 的 python3（含缓存）
-# ============================================================
-FAST_PY=""
-FAST_SP=""
-_fast_cache="$BASE/.fast_python"
 
-read_cached_python() {
-    _cached=$(cat "$_fast_cache" 2>/dev/null)
-    [ -z "$_cached" ] && return 1
-    _cp="${_cached%%|*}"
-    _csp="${_cached#*|}"
-    [ "$_csp" = "$_cached" ] && _csp=""
-    [ -x "$_cp" ] || return 1
-    if [ -z "$_csp" ]; then
-        "$_cp" -c "import PIL" >/dev/null 2>&1 || return 1
-    else
-        PYTHONPATH="$_csp" "$_cp" -c "import PIL" >/dev/null 2>&1 || return 1
-    fi
-    FAST_PY="$_cp"
-    FAST_SP="$_csp"
-    [ -n "$FAST_SP" ] && export PYTHONPATH="$FAST_SP"
-    return 0
-}
-
-if [ -f "$_fast_cache" ] && read_cached_python; then
-    :
-else
-    for _c in python3 python; do
-        _p=$(command -v "$_c" 2>/dev/null)
-        [ -n "$_p" ] && "$_p" -c "import PIL" >/dev/null 2>&1 && { FAST_PY="$_p"; break; }
-    done
-    if [ -z "$FAST_PY" ]; then
-        _pil=""
-        for _base in /mnt/us/Vera /mnt/us/extensions /mnt/us/python /mnt/us/kpm /mnt/us/entware /opt /usr/local; do
-            [ -d "$_base" ] || continue
-            _pil=$(find "$_base" -maxdepth 6 -type d -name PIL 2>/dev/null | head -n1)
-            [ -n "$_pil" ] && break
-        done
-        if [ -n "$_pil" ]; then
-            _sp=$(dirname "$_pil")
-            for _c in python3 python; do
-                _p=$(command -v "$_c" 2>/dev/null)
-                [ -n "$_p" ] && PYTHONPATH="$_sp" "$_p" -c "import PIL" >/dev/null 2>&1 && {
-                    FAST_PY="$_p"; FAST_SP="$_sp"
-                    export PYTHONPATH="$_sp"
-                    break
-                }
-            done
-        fi
-    fi
-    if [ -n "$FAST_PY" ]; then
-        printf '%s\n' "${FAST_PY}|${FAST_SP}" > "$_fast_cache" 2>/dev/null || true
-    fi
-fi
-
-# 数据计算只需 python3（无需 PIL）；整页合成渲染才需要 PIL。
-# Kindle 有 python3 但可能无 PIL：此时数据仍用 python3 heredoc 算，渲染退回 fbink 慢路径。
-PY3=""
-# v13.1 R28：补上旧版的具体路径候选（Vera 的 python3 常不在 PATH，而在 /mnt/us/Vera/bin 等）
-for _c in python3 python /opt/bin/python3 /usr/bin/python3 \
-         /mnt/us/Vera/bin/python3 /mnt/us/Vera/python/bin/python3 \
-         /mnt/us/extensions/python/bin/python3; do
-    PY3=$(command -v "$_c" 2>/dev/null)
-    [ -n "$PY3" ] && break
-done
 
 # ============================================================
 # 计算 8 字段 + 周 7 天秒数 + 抽一句金句
@@ -619,12 +583,14 @@ backfill_progress() {
         return 0
     fi
     rm -f "$PROGRESS_CACHE"
+    # v2.5：progress 回填改 cdeKey 优先（与 daemon book_progress 同口径）——旧版仅按书名匹配，
+    #   书名空格/副标题差异即 MISS → 旧行进度的 st 滞留 reading → 同一本书「在读/读完」双计。
     sqlite3 -readonly -separator "$TAB" "$CC_DB" \
-        "SELECT replace(replace(p_titles_0_nominal,char(9),' '),char(10),' '), CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE p_titles_0_nominal IS NOT NULL AND p_percentFinished>=0 AND p_percentFinished<=100;" \
+        "SELECT cdeKey, replace(replace(p_titles_0_nominal,char(9),' '),char(10),' '), CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE p_percentFinished>=0 AND p_percentFinished<=100;" \
         > "$PROGRESS_CACHE" 2>/dev/null || return 0
     [ -s "$PROGRESS_CACHE" ] || return 0
     awk -F"$TAB" -v map="$PROGRESS_CACHE" '
-    BEGIN{ while((getline line < map)>0){ n=split(line,a,"\t"); if(a[2]!="") pct[a[1]]=a[2] } close(map) }
+    BEGIN{ while((getline line < map)>0){ n=split(line,a,"\t"); if(a[3]!=""){ if(a[1]!="") pctk[a[1]]=a[3]; if(a[2]!="") pctn[a[2]]=a[3] } } close(map) }
     NR==1 && $1=="date" { print; next }
     {
         extra=""
@@ -632,7 +598,7 @@ backfill_progress() {
         else if(NF>=6){ t=$4; prog=$6; st=$5 }
         else if(NF>=4){ t=$4; prog=""; st="" }
         else { print; next }
-        np=pct[t]; if(np!=""){ prog=np }
+        np=""; if($2 in pctk) np=pctk[$2]; if(np=="" && (t in pctn)) np=pctn[t]; if(np!=""){ prog=np }
         if(prog=="") prog=0; if(prog!~/^[0-9]+$/) prog=0
         st=(prog+0>=100)?"finished":"reading"
         printf "%s\t%s\t%s\t%s\t%s\t%s%s\n", $1,$2,$3,t,st,prog,extra
@@ -668,103 +634,7 @@ _calc_key="${hyear}|${_calc_n}|${TS}"
 if [ -f "$CALC_CACHE" ] && [ "$(sed -n '1{s/^#K|//;p;q}' "$CALC_CACHE" 2>/dev/null)" = "$_calc_key" ]; then
     calc=$(sed -n '2p' "$CALC_CACHE" 2>/dev/null)
 else
-if [ -n "$PY3" ]; then
-    calc=$("$PY3" - "$DATA" "$TS" "$hyear" <<'PY'
-import sys
-data_path, today_str, yr_str = sys.argv[1], sys.argv[2], sys.argv[3]
-from datetime import date, timedelta
-
-y, m, d = [int(x) for x in today_str.split('-')]
-def days_in_month(y, m):
-    if m in (1,3,5,7,8,10,12): return 31
-    if m in (4,6,9,11): return 30
-    return 29 if (y%400==0 or (y%4==0 and y%100!=0)) else 28
-def wkd_mon(y, m, d):
-    if m<3: m+=12; y-=1
-    q=d; k=y%100; j=y//100
-    h=(q+(13*(m+1))//5+k+k//4+j//4+5*j)%7
-    return (h+5)%7
-
-dow = wkd_mon(y, m, d)
-ws = date(y,m,d)
-for _ in range(dow): ws -= timedelta(days=1)
-we = date(y,m,d)
-for _ in range(6-dow): we += timedelta(days=1)
-ws_str, we_str = ws.isoformat(), we.isoformat()
-
-sec_today=0; sec_week=0
-days_set=set(); fin_set=set(); rb_set=set(); fb_set=set()
-sec7=[0]*7
-yr_str_eq = yr_str
-msec = 0; ysec = 0   # msec=本月累计(供本月日均); ysec=本年累计(供四卡"累计时长"，与 FAST/compose.py 口径一致)
-read_set=set()
-today_d = date(y,m,d)
-try:
-    with open(data_path,'r',encoding='utf-8',errors='replace') as f:
-        nxt = f.readline()
-        for line in f:
-            p = line.rstrip().split('\t')
-            if len(p)<3: continue
-            dt = p[0]
-            bid = p[1] if len(p)>1 else ''
-            try: sec = int(float(p[2]))
-            except: continue
-            prog = 0; st='reading'
-            if len(p)>=6:
-                try: prog = int(float(p[5]))
-                except: prog=0
-                st = p[4] if p[4] else 'reading'
-            if sec<=0: continue
-            # v2.4.0：归档行（len>=7，第 7 列=当月阅读日清单）展开 → 天数/streak 逐日精确
-            fdays = None
-            if len(p) >= 7 and p[6]:
-                fdays = []
-                for x in p[6].split(','):
-                    x = x.strip()
-                    if x.isdigit(): fdays.append(f"{dt[:7]}-{int(x):02d}")
-            if fdays: read_set.update(fdays)
-            else: read_set.add(dt)
-            if dt == today_str: sec_today += sec
-            if ws_str <= dt <= we_str:
-                try:
-                    rd = date.fromisoformat(dt)
-                except:
-                    rd = None
-                if rd is not None and rd > today_d:
-                    pass
-                else:
-                    sec_week += sec
-                    if rd is not None:
-                        idx = (rd - ws).days
-                        if 0<=idx<=6: sec7[idx] += sec
-            if dt[:7] == today_str[:7]: msec += sec
-            if dt[:4] == yr_str_eq:
-                ysec += sec
-                isfin = prog >= 100 or st == 'finished'
-                if isfin: fin_set.add(bid)
-                else: rb_set.add(bid)
-                if fdays: days_set.update(fdays)
-                else: days_set.add(dt)
-except Exception:
-    pass
-
-cur = date(y,m,d)
-if today_str not in read_set: cur -= timedelta(days=1)
-streak=0
-while cur.isoformat() in read_set:
-    streak += 1
-    cur -= timedelta(days=1)
-
-days_elapsed = d
-avg_sec = int(round(msec / days_elapsed)) if days_elapsed else 0
-total_week = sum(sec7)
-# R39: 末尾新增 msec（本月累计秒数 = 本月时长），供第一排"本月时长"字段
-print(f"{sec_today}\t{sec_week}\t{avg_sec}\t{streak}\t{ysec}\t{len(days_set)}\t{len(rb_set)}\t{len(fin_set)}\t{total_week}\t{','.join(str(x) for x in sec7)}\t{dow}\t{msec}")
-PY
-    )
-else
-    # v13.1 R31：慢路径用 awk 算数据（旧版方案，不依赖 python3）。
-    # Vera 5.19.03 无 python3 → 之前 heredoc 不跑、calc 写死全 0。现改为纯 awk。
+    # v2.5：awk 单路径算数据（python 快路径已整体移除，KPW6/Vera 5.19.03 无 python3）
     calc=$(awk -F "$TAB" -v today="$TS" -v year="$hyear" '
 function jd(y,m,d,   a){ a=int((14-m)/12); y=y+4800-a; m=m+12*a-3; return d+int((153*m+2)/5)+365*y+int(y/4)-int(y/100)+int(y/400)-32045 }
 BEGIN {
@@ -807,8 +677,10 @@ BEGIN {
                 if(!(fday in seen_day)){ seen_day[fday]=1; days_year++ }
             }
         } else if(!(dstr in seen_day)){ seen_day[dstr]=1; days_year++ }
-        if(isfin){ if(!(bid in fin_seen)){ fin_seen[bid]=1; fb++ } }
-        else { if(!(bid in rb_seen)){ rb_seen[bid]=1; rb++ } }
+        # v2.5：在读/读完按书名归并（与 rank 同口径）
+        tkey=$4; if(tkey=="") tkey=bid
+        if(isfin){ if(!(tkey in fin_seen)){ fin_seen[tkey]=1; fb++ } }
+        else { if(!(tkey in rb_seen)){ rb_seen[tkey]=1; rb++ } }
     }
     # v2.4.0：streak 改 hash 直查（旧版 read_jd 数组+嵌套线性扫 O(连续天数×阅读天数)）
     read_jd_set[d_jd]=1
@@ -825,7 +697,6 @@ END {
     printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\n", sec_today, sec_week, avg, streak, sec_year, days_year, rb, fb, sec_week, sec7str, dow, sec_month
 }
 ' "$DATA")
-fi
     { echo "#K|$_calc_key"; printf '%s\n' "$calc"; } > "$CALC_CACHE" 2>/dev/null || true
 fi
 
@@ -837,7 +708,7 @@ YEAR_RB=$7; YEAR_FB=$8; TOTAL_WEEK=$9; SEC7=${10}; DOW=${11}; MONTH_TOTAL=${12}
 # 格式化（无单位）：时间用 HH:MM，数字直接
 # v2.3.33：纯内建算术（原每次 fork awk；赋值 FMT_HM 免 $() 子 shell）。输出与旧版 "%dh%dm" 逐字节一致。
 fmt_hm() {
-    _s=$(($1 + 0))
+    _s=$(($1 + 30))   # v2.5：分钟级四舍五入（±30s 进位）——与采集端 ±30s 精度对齐，8.5 分钟不再显示成 0h8m
     FMT_HM="$((_s / 3600))h$((_s % 3600 / 60))m"
 }
 
@@ -870,29 +741,8 @@ echo "$(date): calc today=$TODAY_STR week=$WEEK_STR avg=$AVG_STR streak=$STREAK_
 # ============================================================
 # 派发渲染
 # ============================================================
-if [ -n "$FAST_PY" ]; then
-    rm -f "$PNG_TMP"
-    "$FAST_PY" "$UI_DIR/compose.py" \
-        --bg "$BASE_BG" --quotes "$BASE_QUOTES" --data "$DATA" \
-        --reg-font "$RFONT" --bold-font "$BFONT" \
-        --today "$TS" --year "$hyear" --out "$PNG_TMP" 2>>"$FBINK_LOG"
-    if [ $? -eq 0 ] && [ -r "$PNG_TMP" ]; then
-        echo "$(date): fast path ON python=$FAST_PY -> $PNG_TMP"
-        collapse_system_ui
-        # v2.4.2: 推图(-b 不刷)与提交分离，提交走 commit_screen 计数制 flash（与 SLOW 路径同模式）
-        "$FBINK" -q -b -g "file=$PNG_TMP" 2>>"$FBINK_LOG" || { restore_system_ui; rm -f "$PNG_TMP"; fail "fbink push failed"; }
-        commit_screen
-        restore_system_ui
-        rm -f "$PNG_TMP"
-        _tm dashboard_end
-        return 0
-    fi
-    rm -f "$PNG_TMP"
-    echo "$(date): fast path compose failed; falling back"
-fi
-
-# === SLOW path ===
-echo "$(date): fast path OFF python=$FAST_PY"
+# v2.5：python/PIL 快通道已整体移除（KPW6/Vera 5.19.03 无 python3，该路径从未执行），恒走 fbink 慢渲染
+echo "$(date): render: fbink slow path"
 
 # 1. 推背景（R48: 加 -b 只写 framebuffer 不刷屏，避免先闪一次空背景；统一到最后一次 commit 刷新，消除"闪2次"）
 collapse_system_ui
@@ -938,7 +788,7 @@ if [ "$TW_S" -gt 0 ] 2>/dev/null; then
             i=$((i+1)); continue
         fi
         x=$((bar_x0 + i * col_w))
-        # 4 档离散（与 compose.py 一致）
+        # 4 档离散
         if [ "$s" -lt $((30 * 60)) ]; then
             h=$LOW_H
         elif [ "$s" -lt $((120 * 60)) ]; then
@@ -1009,7 +859,7 @@ _tm dashboard_end
 render_ranking() {
     # v2.3.10：排行页调试日志（真机打开一次排行页即可 USB 取回 /mnt/us/reading-time/rank-debug.log）
     RANK_DEBUG="$BASE/rank-debug.log"
-    # v2.3.32：缓存/调试开关（slow path 数据层定义同值，python 快路径共用渲染段时也须可用）
+    # v2.3.32：缓存/调试开关
     DBG_FLAG="$BASE/.rank-debug.flag"
     RANK_CACHE="$BASE/.rank_all.tsv"
     CC_ALL="$BASE/.cc_all.tsv"
@@ -1024,184 +874,7 @@ render_ranking() {
     RANK_BG="$UI_DIR/ranking_bg.png"
     [ -f "$RANK_BG" ] || fail "ranking_bg.png missing"
 
-    # ---- 1. 数据计算（python3 heredoc；无 python3 退 awk 兜底） ----
-    if [ -n "$PY3" ]; then
-        RANK_OUT=$("$PY3" - "$DATA" "$BASE/book-meta.tsv" "/var/local/cc.db" "$RANK_SORT" "$RANK_OFFSET" "$TS" 2>>"$FBINK_LOG" <<'PY'
-import sys, sqlite3, os
-from datetime import date, datetime
-data_path, meta_path, cc_db_path, sort_mode, offset_s, today = sys.argv[1:7]
-offset = int(offset_s)
-
-dur = {}
-title_by_bid = {}
-fd_bid = {}   # v2.3.32：bid -> tsv 最早阅读日（同名归并的开始日期权威）
-with open(data_path,'r',encoding='utf-8',errors='replace') as f:
-    f.readline()
-    for line in f:
-        # v2.4.0：rstrip() 会连尾部 TAB 一起剥掉 → 老 4 列空书名行被误收成 3 字段遭 len<4 丢弃
-        #   （与 awk 口径不一致、折叠前后总量对不上）；只剥换行，保留尾部空字段
-        p = line.rstrip('\r\n').split('\t')
-        if len(p) < 4: continue
-        bid = p[1]
-        try: sec = int(float(p[2]))
-        except: continue
-        if sec <= 0: continue
-        dur[bid] = dur.get(bid, 0) + sec
-        # v2.3.32：bid 级有效书名 = 首个非空（daemon 偶发记空书名行；取首非空后空行自动归队，不再被拆成伪书）
-        if bid not in title_by_bid:
-            _t0 = (p[3] or '').strip() if len(p) > 3 else ''
-            if _t0:
-                title_by_bid[bid] = _t0
-        d10 = p[0].strip()[:10]
-        # v2.4.0：归档行 date=当月最后阅读日 → 开始日期取日清单最小日
-        fd_c = d10
-        if len(p) >= 7 and p[6]:
-            try:
-                md = min(int(x) for x in p[6].split(',') if x.strip())
-                if 1 <= md <= 31: fd_c = f"{p[0][:7]}-{md:02d}"
-            except Exception:
-                fd_c = d10
-        if len(fd_c) == 10 and (bid not in fd_bid or fd_c < fd_bid[bid]):
-            fd_bid[bid] = fd_c
-
-first_open = {}
-if os.path.exists(meta_path):
-    with open(meta_path,'r',encoding='utf-8',errors='replace') as f:
-        f.readline()
-        for line in f:
-            p = line.rstrip().split('\t')
-            if len(p) < 2: continue
-            try: first_open[p[0]] = int(p[1])
-            except: continue
-
-author_by_bid = {}
-pct_by_bid = {}
-last_access_by_bid = {}
-asin_by_bid = {}
-if os.path.exists(cc_db_path):
-    # v2.3.20：作者真名权威来源 = j_credits 内 name.display（readinglog 实证结构
-    # [{"name":{"display":"真名","collation":"…","language":"…"},"kind":"Author"}]），
-    # 非 collation 排序串（那会显示成拼音）。SQL 增加 j_credits 列，json 递归取 display。
-    import json as _json
-    def _author_display(jcred, coll):
-        jj = (jcred or '').strip()
-        if jj:
-            try:
-                def _dig(o):
-                    if isinstance(o, dict):
-                        if isinstance(o.get('display'), str) and o['display'].strip():
-                            return o['display'].strip()
-                        for v in o.values():
-                            r = _dig(v)
-                            if r: return r
-                    elif isinstance(o, list):
-                        for v in o:
-                            r = _dig(v)
-                            if r: return r
-                    return ''
-                r = _dig(_json.loads(jj))
-                if r: return r
-            except Exception:
-                pass
-        # collation 去 padding：ASCII 开头原样；非 ASCII 开头剥去连续重复>=3 前缀（阿阿阿…）
-        c = (coll or '').strip()
-        if c and not (c[0].isascii() and c[0].isalnum()):
-            i = 0
-            while i < len(c) and c[i] == c[0]: i += 1
-            if i >= 3: c = c[i:]
-        return c
-    try:
-        con = sqlite3.connect(f'file:{cc_db_path}?mode=ro', uri=True)
-        cur = con.cursor()
-        cur.execute("SELECT cdeKey, coalesce(p_titles_0_nominal,''), coalesce(p_credits_0_name_collation,''), coalesce(j_credits,''), coalesce(p_percentFinished,0), coalesce(p_lastAccess,0) FROM Entries WHERE cdeKey IS NOT NULL")
-        for cdeKey, t, a, jcred, pct, la in cur.fetchall():
-            if cdeKey in dur:
-                author_by_bid[cdeKey] = _author_display(jcred, a).replace('\t',' ').replace('\n',' ').strip()
-                pct_by_bid[cdeKey] = int((pct or 0) + 0.5)
-                last_access_by_bid[cdeKey] = int(la or 0)
-                asin_by_bid[cdeKey] = cdeKey
-        con.close()
-    except Exception as e:
-        sys.stderr.write(f"cc.db read failed: {e}\n")
-
-today_d = date.fromisoformat(today)
-today_ts = int(datetime(today_d.year, today_d.month, today_d.day).timestamp())
-
-# v2.3.32：同名书归并 —— 删书重装后 Kindle 会给同一本书换新 key（旁载/推送的书 key 是随机 UUID），
-#   tsv 里旧 key 的历史行没被清 → 排行出现「同名两行、时长分家」。现改为按「书名」聚合：
-#   时长相加；代表 bid = 最近访问(last_access)最大者（= 当前在读书，作者/进度/封面随它取）；
-#   开始日期取同名最早 first_open（日均分母从真正首读日算起）；空书名退 bid 防误并。
-D = {}   # tkey -> [secs, rep_bid, fo_min, la_max]
-for bid, secs in dur.items():
-    tk = (title_by_bid.get(bid,'') or '').strip()
-    if not tk:
-        tk = bid
-    la = last_access_by_bid.get(bid, 0)
-    # v2.3.32：开始日期 = tsv 最早阅读日(fd_bid，同名归并权威，跨 key 取最早) → meta first_open → la → 今天
-    fo = 0
-    if bid in fd_bid:
-        try: fo = int(datetime.fromisoformat(fd_bid[bid]).timestamp())
-        except Exception: fo = 0
-    if fo == 0: fo = first_open.get(bid, 0)
-    if fo == 0: fo = la
-    if fo == 0: fo = today_ts
-    if tk not in D:
-        D[tk] = [0, bid, fo, la]
-    e = D[tk]
-    e[0] += secs
-    if la > e[3]:
-        e[1] = bid; e[3] = la
-    if fo < e[2]:
-        e[2] = fo
-
-records = []
-for tk, (secs, rep, fo, la) in D.items():
-    t = (title_by_bid.get(rep,'') or '').strip()
-    if not t: t = tk
-    # v2.3.7：书名最多展示 15 字符，超出加省略号（避免超长书名如 fastmetrics_*.txt 占满整行）
-    if len(t) > 15:
-        t = t[:15] + '…'
-    a = author_by_bid.get(rep,'').strip()
-    asin = asin_by_bid.get(rep,'').strip()
-    pct = pct_by_bid.get(rep, 0)
-    try:
-        fo_d = datetime.fromtimestamp(fo).date()
-        days = max(1, (today_d - fo_d).days + 1)
-    except Exception:
-        days = 1
-    daily = secs // days
-    records.append((rep, t, a, asin, fo, la, pct, secs, daily))
-
-# v2.4.0：并列时加确定性强键（时长→日均→书名字典序）——归档改变行序后名次仍逐位不变
-if sort_mode == 'daily':
-    records.sort(key=lambda r: (-r[8], -r[7], r[1]))
-else:
-    records.sort(key=lambda r: (-r[7], -r[8], r[1]))
-
-page_records = records[offset*6 : offset*6 + 6]
-total = len(records)
-
-# v2.3.32：python 快路径同样补 12 字段（f11=时长文本恒带 h "0h 17m"；f12=日均文本 h>0 才带 h）
-def _hh(x, sp):
-    h, m = divmod(int(x), 3600); m = m // 60
-    if sp: return f"{h}h {m}m"
-    return f"{h}h{m}m" if h > 0 else f"{m}m"
-for i, r in enumerate(page_records, 1):
-    try: fo_iso = datetime.fromtimestamp(r[4]).strftime('%Y-%m-%d')
-    except: fo_iso = ''
-    try: la_iso = datetime.fromtimestamp(r[5]).strftime('%Y-%m-%d')
-    except: la_iso = ''
-    _a = r[2] if (r[2] or '').strip() else '-'   # v2.3.32 空作者占位，防渲染 tab 分词错位
-    print('\t'.join([str(i), r[0], r[1], _a, r[3], fo_iso, la_iso, str(r[6]), str(r[7]), str(r[8]), _hh(r[7], True), _hh(r[8], False)]))
-
-print(f"__RANK_TOTAL__\t{total}")
-PY
-)
-        RANK_TOTAL=$(printf '%s\n' "$RANK_OUT" | awk -F'\t' '/^__RANK_TOTAL__/{print $2}')
-        RANK_LINES=$(printf '%s\n' "$RANK_OUT" | grep -v '^__RANK_TOTAL__')
-        RANK_TOTAL=${RANK_TOTAL:-0}
-    else
-        # ===== 无 python3 兜底（真机路径！KPW6 无 python3，必走这里）=====
+    # ---- 1. 数据计算（v2.5 起 awk 单路径） ----
         # v2.3.10 彻底重写（三次反馈「字段不显示」）：
         #   旧版把 作者/开始日期/最近日期/进度 全押在 cc.db + book-meta.tsv 上，
         #   只要 sqlite3 不可用、cc.db 查不到、或 book-meta.tsv 尚未生成 → 这些字段全空且无报错。
@@ -1210,7 +883,7 @@ PY
         #     · book-meta.tsv 存在时，优先用其 first_open 作为开始日期
         #     · cc.db 只补「作者」（唯一来源；取不到就留空，不影响其余字段）
         #   全流程中间结果写 $BASE/rank-debug.log，真机打开一次排行页即可取回排障。
-        # v2.3.32：DBG_FLAG / RANK_CACHE / CC_ALL / _dbg 已统一定义在函数头（python 快路径共用渲染段）
+        # v2.3.32：DBG_FLAG / RANK_CACHE / CC_ALL / _dbg 已统一定义在函数头
         _t0=$(date +%s)
         # ---- v2.3.24 缓存 key：数据源任何变化（tsv/meta/cc.db 增删改、跨天、排序方式）→ 自动重建 ----
         _tsv_n=$(wc -l < "$DATA" 2>/dev/null | tr -d ' ')
@@ -1221,18 +894,20 @@ PY
         _cc_sz=$(wc -c < /var/local/cc.db 2>/dev/null | tr -d ' ')
         [ -z "$_cc_sz" ] && _cc_sz=0
         # v2.3.32：缓存格式版本 2（空字段占位）——旧版缓存（无占位）key 不匹配 → 自动重建，防渲染错位
-        _key="v2|$RANK_SORT|$_tsv_n|$_meta_n|$_cc_sz|$TS"
+        _key="v3|$RANK_SORT|$_tsv_n|$_meta_n|$_cc_sz|$TS"   # v2.5：v3=日均口径改末读日定格，旧缓存自动作废
         _hit=0
         # v2.3.32：HIT 需聚合缓存 + 作者缓存 + 两张封面映射齐全，任一缺失 → MISS 重建
         if [ -f "$RANK_CACHE" ] && [ -f "$CC_ALL" ] && [ -f "$COVER_MAP" ] && [ -f "$UUID_MAP" ]; then
             _h1=$(head -1 "$RANK_CACHE" 2>/dev/null)
             if [ "$_h1" = "#K|$_key" ]; then _hit=1; fi
+            # v2.5：坏缓存自愈——并发写坏只剩 header（数据行数=0）时降级 MISS 重建
+            [ "$_hit" = "1" ] && [ "$(wc -l < "$RANK_CACHE" 2>/dev/null | tr -d ' ')" -le 1 ] && _hit=0
         fi
         if [ "$_hit" = "1" ]; then
             # ===== 缓存命中：零 sqlite3 / 零 tsv 全扫，仅从缓存截取本页（含时长/日均文本列） =====
             RANK_LINES=$(LC_ALL=C awk -F'\t' -v s=$((RANK_OFFSET * 6 + 2)) '
                 # v2.3.32：页截取 = 逐列展开 + 空字段占位（兼容 v2.3.27 前无占位旧缓存，防 tab 分词错位→封面/字段错乱）
-                function hhmm(x, sp,   h, m, r) { h = int(x/3600); m = int((x%3600)/60)
+                function hhmm(x, sp,   h, m, r) { x+=30; h = int(x/3600); m = int((x%3600)/60)
                     if (sp == 1) r = sprintf("%dh %dm", h, m)
                     else if (h > 0) r = sprintf("%dh%dm", h, m)
                     else r = sprintf("%dm", m)
@@ -1466,7 +1141,10 @@ PY
                     if (f == "") f = today
                     fd_eff[i] = f
                     fn = dnum(f)
-                    days = (fn > 0 && today_num > 0) ? (today_num - fn + 1) : 1
+                    # v2.5：日均分母 = 末读日−首读日+1（末读日=tsv 最后阅读日 ldT，非今天）→ 读完的书日均定格
+                    ln = (tk in ldT) ? dnum(ldT[tk]) : 0
+                    if (ln < fn) ln = fn
+                    days = (fn > 0 && ln > 0) ? (ln - fn + 1) : 1
                     if (days < 1) days = 1
                     daily_arr[i] = int(dur_arr[i] / days)
                     # 进度：代表 bid 的 tsv progress 列优先；为空或 0（历史数据常缺此列）则回落 cc.db
@@ -1504,15 +1182,17 @@ PY
                     print rb "\t" trtitle(shown[tk]) "\t" au "\t" rb "\t" fd_eff[i] "\t" lv "\t" pct_arr[i] "\t" dur_arr[i] "\t" daily_arr[i]
                 }
                 print "__RANK_TOTAL__\t" n
-            }' "$DATA" 2>>"$RANK_DEBUG" > "$RANK_CACHE.tmp"
+            }' "$DATA" 2>>"$RANK_DEBUG" > "$RANK_CACHE.tmp.$$"
 
         # 拼 header（缓存 key 首行）后落盘
-        { echo "#K|$_key"; cat "$RANK_CACHE.tmp"; } > "$RANK_CACHE" 2>/dev/null
-        rm -f "$RANK_CACHE.tmp"
+        # v2.5：tmp 带 PID 后缀 + mv 原子替换——并发实例互不踩踏，读者只会见到完整的旧/新缓存
+        { echo "#K|$_key"; cat "$RANK_CACHE.tmp.$$"; } > "$RANK_CACHE.new.$$" 2>/dev/null \
+            && mv "$RANK_CACHE.new.$$" "$RANK_CACHE" 2>/dev/null
+        rm -f "$RANK_CACHE.tmp.$$" "$RANK_CACHE.new.$$"
         # v2.3.32：页截取 = 逐列展开 + 空字段占位（兼容 v2.3.27 前无占位旧缓存）；行循环零 awk 子进程
         RANK_LINES=$(LC_ALL=C awk -F'\t' -v s=$((RANK_OFFSET * 6 + 2)) '
-            function hhmm(x, sp,   h, m, r) { h = int(x/3600); m = int((x%3600)/60)
-                if (sp == 1) r = sprintf("%dh %dm", h, m)          # 时长列：恒带 h（"0h 17m"，保历史格式）
+            function hhmm(x, sp,   h, m, r) { x+=30; h = int(x/3600); m = int((x%3600)/60)
+                if (sp == 1) r = sprintf("%dh %dm", h, m)          # 时长列：恒带 h（"0h 17m"，保历史格式）；v2.5：分钟四舍五入
                 else if (h > 0) r = sprintf("%dh%dm", h, m)        # 日均列：h>0 带 h，否则纯 m（"56m"）
                 else r = sprintf("%dm", m)
                 return r }
@@ -1528,7 +1208,6 @@ PY
         fi   # ← cache hit/miss 分支结束（v2.3.24）
         _dbg "  [数据层] 总耗时 $(( $(date +%s) - _t0 ))s（hit=只读缓存；miss=重建）"
         _tm data_done
-    fi
 
     # ---- 2. 推 ranking_bg.png 底图 ----
     collapse_system_ui
@@ -1577,10 +1256,10 @@ fb_text_center 40 1564 929 1079 REGULAR BLACK "$((RANK_OFFSET+1)) / $total_pages
         [ "$la_iso" = "-" ] && la_iso=""
         [ -z "$title" ] && title="$bid"
         row_top=$(( ROW_TOP0 + (idx - 1) * ROW_H ))
-        # 封面（fbink -g 推 JPG；v2.3.8 多路径 fallback，找不到则留空）
+        # 封面（fbink -g 推 JPG；v2.3.8 多路径 fallback；v2.4.3 落空改用统一占位图 book.png）
         # v2.3.10：把探测过程写进 rank-debug.log，定位「封面拿不到」究竟是路径不对还是缩略图不存在
+        thumb=""
         if [ -n "$asin" ]; then
-            thumb=""
             uuid=""
             # v2.3.13：封面权威来源 = cc.db p_thumbnail（kindle-reading-records 参考实现实证：
             #   p_thumbnail 直接存封面路径，对 ASIN 封面与个人文档随机文件名皆权威，不猜 UUID/ASIN 拼文件名）。
@@ -1616,18 +1295,20 @@ fb_text_center 40 1564 929 1079 REGULAR BLACK "$((RANK_OFFSET+1)) / $total_pages
             if [ "$idx" = "1" ]; then
                 echo "  [封面] 第 $idx 行 asin=$asin key=${_key:-<无>} uuid=${uuid:-<无>} p_thumbnail=${_cov:-<无>} 命中=${thumb:-<无>}" >> "$RANK_DEBUG"
             fi
-            if [ -n "$thumb" ]; then
-                # v2.3.20：上边距 20 vp_px = 校正 fbink 全局 -18 px 偏移后封面顶 vp = 上分线 vp + 20
-                # v2.3.32：复探实测封面顶 vp=477 vs 上分线 vp=460（留 17vp_px 上边距），但文字 vp_y_top=485 →
-                #          cover vp_y_top 比文字偏上 8 vp_px（fbink -g 推图无偏，fbink -t 偏下 8 vp_px）。
-                #          改 cover y = row_top+28 → cover vp_y_top=485 与文字 vp_y_top 完全齐平；上下边距：上 25 vp_px / 下 25 vp_px。
-                # v2.3.35：封面 x 80→150（序号移封面左侧，封面/书名/作者/进度条整组右移 70，y/w/h 不动）
-                # v2.3.32 行级打点：cover_ms = 单张封面 fbink -g 耗时（jpg 解码+dither 可疑大头）
-                # v2.3.33：_nowcs 内建取值（零 fork）
-                _nowcs; _g0=$CSEC
-                "$FBINK" -q -b -g "file=$thumb,x=150,y=$((row_top+28)),w=120,h=165,dither" 2>>"$FBINK_LOG" || true
-                _nowcs; echo "  [row $idx] cover_ms=$(( CSEC - _g0 ))" >> "$RANK_DEBUG"
-            fi
+        fi
+        # v2.4.3：封面搜索落空（含无 asin 的书）→ 统一占位图；占位图本身缺失则仍留空
+        [ -z "$thumb" ] && [ -f "$BOOK_PLACEHOLDER" ] && thumb="$BOOK_PLACEHOLDER"
+        if [ -n "$thumb" ]; then
+            # v2.3.20：上边距 20 vp_px = 校正 fbink 全局 -18 px 偏移后封面顶 vp = 上分线 vp + 20
+            # v2.3.32：复探实测封面顶 vp=477 vs 上分线 vp=460（留 17vp_px 上边距），但文字 vp_y_top=485 →
+            #          cover vp_y_top 比文字偏上 8 vp_px（fbink -g 推图无偏，fbink -t 偏下 8 vp_px）。
+            #          改 cover y = row_top+28 → cover vp_y_top=485 与文字 vp_y_top 完全齐平；上下边距：上 25 vp_px / 下 25 vp_px。
+            # v2.3.35：封面 x 80→150（序号移封面左侧，封面/书名/作者/进度条整组右移 70，y/w/h 不动）
+            # v2.3.32 行级打点：cover_ms = 单张封面 fbink -g 耗时（jpg 解码+dither 可疑大头）
+            # v2.3.33：_nowcs 内建取值（零 fork）
+            _nowcs; _g0=$CSEC
+            "$FBINK" -q -b -g "file=$thumb,x=150,y=$((row_top+28)),w=120,h=165,dither" 2>>"$FBINK_LOG" || true
+            _nowcs; echo "  [row $idx] cover_ms=$(( CSEC - _g0 ))" >> "$RANK_DEBUG"
         fi
         # v2.3.32 行级打点：text_ms = 本行文字+进度条整段耗时（序号→日均 7-9 次 fbink -t/-k）
         _nowcs; _x0=$CSEC
@@ -1738,16 +1419,51 @@ while :; do
     # goto_*/rank_*/period_* 已在 case 内自渲染；exit/未知直接 break
 done
 
-# 自动回主页（右上角退出 / 2 分钟超时 / 主页键 trap 恢复）
+# 退出收尾（右上角退出 / 2 分钟超时 / 主页键 trap 恢复）：返回图书馆，library 未注册时回主页兜底
 # v2.4.2 退出即时反馈（局部版）：× 按钮区画黑块 + DU 波形只刷该小块（~0.15s，不闪全屏）——
 #   v2.4.1 用全屏 flash 反馈，与渲染 flash 叠加后「点一下闪一下」感太强；局部反色同样即按即见。
 #   坐标=× 可视圆外接方块（圆心 1180,120，r=28）。
 "$FBINK" -q -B BLACK -k "top=92,left=1152,width=56,height=56" -W DU -s >/dev/null 2>&1 || true
 # 导出日志到 USB 根（补回旧版 export_logs，方便排障）
-for _lf in dashboard-launch.log fbink.log dashboard-touch.log install.log; do
-    [ -f "$BASE/$_lf" ] && cp "$BASE/$_lf" "/mnt/us/LOG-$_lf" 2>/dev/null
-done
+# v2.4.6：退出回「图书馆」终局——真机证据链：① 5.19 无独立图书馆 booklet（lib_id=未注册）；
+#   ② v2.4.5 合书返回落点实测为 KPPMainApp 主页（exit-watchdog activeApp=[com.lab126.KPPMainApp]）——
+#   5.14.2+ 起主页/图书馆合一于 KPP（React Native 桌面，KindleModding/KPP_Patch 有载），
+#   合书只能回 KPP 默认视图（主页），到不了图书馆 tab。
+#   ③ 项目 v2.0 起就携带的 URI app://com.lab126.KPPMainApp?view=KPP_LIBRARY（KPP 图书馆视图参数）
+#   从未被真正执行过（旧链首条 start home 恒「成功」拦截）——今扶正为无独立 booklet 时的主路径。
+#   保险丝：后台看守 6s 后查 activeApp，含 booklet/KPP = 已回系统界面；皆无 → 补跳 booklet.home 防死屏。
+#   （v2.4.5 看守误判教训：KPPMainApp 不含 booklet 字样，被误补一跳 → 「几秒后刷新一下」。）
+#   须在下方日志拷贝之前落笔，否则 exit 行进不了 USB 根目录的 LOG-dashboard-launch.log。
+_LIB_ID=""
+if command -v sqlite3 >/dev/null 2>&1 && [ -r /var/local/appreg.db ]; then
+    _LIB_ID=$(sqlite3 -readonly -noheader /var/local/appreg.db \
+        "SELECT handlerId FROM handlerIds WHERE handlerId LIKE '%booklet%library%' ORDER BY handlerId LIMIT 1" 2>/dev/null)
+    [ -z "$_LIB_ID" ] && _LIB_ID=$(sqlite3 -noheader /var/local/appreg.db \
+        "SELECT handlerId FROM handlerIds WHERE handlerId LIKE '%booklet%library%' ORDER BY handlerId LIMIT 1" 2>/dev/null)
+fi
+if [ -n "$_LIB_ID" ]; then
+    _EXIT_TO="app://$_LIB_ID"
+else
+    _EXIT_TO="app://com.lab126.KPPMainApp?view=KPP_LIBRARY"
+fi
+echo "$(date): exit → lib_id=${_LIB_ID:-未注册} 目标=$_EXIT_TO" >> "$LOG"
+# v2.4.7：USB 根日志拷贝改 debug 门控——稳定期每次退出拷 4 份日志纯属积灰；
+#   USB 根放一个 debug.flag 空文件即恢复全量拷贝（排障通道保留）。$BASE 内日志有 200KB 自截断，无需管。
+_DEBUG=""
+[ -e /mnt/us/debug.flag ] && _DEBUG=1
+if [ -n "$_DEBUG" ]; then
+    for _lf in dashboard-launch.log fbink.log dashboard-touch.log install.log; do
+        [ -f "$BASE/$_lf" ] && cp "$BASE/$_lf" "/mnt/us/LOG-$_lf" 2>/dev/null
+    done
+fi
 restore_system_ui
-lipc-set-prop com.lab126.appmgrd start 'app://com.lab126.booklet.home' >/dev/null 2>&1 || \
-lipc-set-prop com.lab126.appmgrd start 'app://com.lab126.KPPMainApp?view=KPP_LIBRARY' >/dev/null 2>&1 || true
+lipc-set-prop com.lab126.appmgrd start "$_EXIT_TO" >/dev/null 2>&1 || true
+( sleep 6
+  _cur=$(lipc-get-prop com.lab126.appmgrd activeApp 2>/dev/null)
+  echo "$(date): exit-watchdog activeApp=[$_cur]" >> "$LOG"
+  [ -n "$_DEBUG" ] && echo "$(date): exit-watchdog activeApp=[$_cur]" >> "/mnt/us/LOG-dashboard-launch.log"
+  case "$_cur" in
+      *booklet*|*KPP*) : ;;   # 已回系统界面（图书馆/主页），无需干预
+      *) lipc-set-prop com.lab126.appmgrd start "app://com.lab126.booklet.home" >/dev/null 2>&1 || true ;;
+  esac ) </dev/null >/dev/null 2>&1 &
 exit 0

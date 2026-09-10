@@ -15,12 +15,19 @@ STATE="$BASE/state"
 REPORT="$BASE/阅读时长统计.txt"
 LOG="$BASE/service.log"
 CC_DB="/var/local/cc.db"
-READING_INTERVAL=120
+READING_INTERVAL=60
 ACTIVE_INTERVAL=30
 LOCKED_INTERVAL=60
-SAVE_INTERVAL=90
+SAVE_INTERVAL=60
 STATE_INTERVAL=90
-EDGE_CREDIT_MAX=5
+# v2.5：边缘补偿合理化——旧版开书/合书统一 cap 5s，而真实损失期望是「半周期」：
+#   开书发现延迟 ∈ [0,ACTIVE_INTERVAL] → 期望 15s；合书尾巴 ∈ [0,READING_INTERVAL] → 期望 30s。
+#   delta/2 是无偏估计，按各自半周期封顶（模拟实证：旧版 9 分钟阅读只入账 485s，新版 ≈530s）。
+EDGE_CREDIT_OPEN_MAX=15
+EDGE_CREDIT_CLOSE_MAX=30
+# v2.5：阅读中落账周期 120s→60s（合书尾巴损失减半）；
+#   write_report 降频至 600s（合书/切书/跨天/退出仍即时）抵消唤醒翻倍的 fork 开销。
+REPORT_INTERVAL=600
 
 mkdir -p "$BASE"
 umask 077
@@ -123,6 +130,14 @@ write_report() {
         awk -F '\t' '{h=int($1/3600);m=int(($1%3600)/60);s=$1%60;if(h>0)t=h"h "m"m";else if(m>0)t=m"m "s"s";else t=s"s";print "- "$2": "t" ("$3")"}' "$_wr_bd" 2>/dev/null
     } > "$REPORT.tmp" 2>/dev/null && mv "$REPORT.tmp" "$REPORT" 2>/dev/null || true
     rm -f "$_wr_tf" "$_wr_bd"
+    LAST_REPORT="$(date +%s)"
+}
+LAST_REPORT=0
+# v2.5：阅读中报告降频（REPORT_INTERVAL），事件节点（合书/切书/跨天/退出）仍即时写
+maybe_report() {
+    _mr_now="$(date +%s)"
+    [ $((_mr_now-LAST_REPORT)) -ge "$REPORT_INTERVAL" ] && write_report
+    return 0
 }
 
 bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
@@ -131,9 +146,13 @@ flush() {
         prog="$(book_progress "$bucket_id" "$bucket_title")"
         st="reading"
         [ "$prog" = "100" ] && st="finished"
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$bucket_date" "$bucket_id" "$bucket" "$bucket_title" "$st" "$prog" >> "$DATA" 2>/dev/null || true
+        # v2.5：写成功才清零——旧版 `|| true` 后无条件清零，USB 占用/磁盘满时整段静默丢账
+        if printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$bucket_date" "$bucket_id" "$bucket" "$bucket_title" "$st" "$prog" >> "$DATA" 2>/dev/null; then
+            bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
+        fi
+    else
+        bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
     fi
-    bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
 }
 cleanup() { flush; service_state="已停止"; write_report; }
 trap 'cleanup; trap - INT TERM HUP EXIT; exit 0' INT TERM HUP
@@ -151,8 +170,9 @@ add_edge_credit() {
     edge_id="$2"
     edge_title="$3"
     edge_date="$4"
+    edge_cap="$5"
     edge_credit=$((edge_delta/2))
-    [ "$edge_credit" -gt "$EDGE_CREDIT_MAX" ] && edge_credit="$EDGE_CREDIT_MAX"
+    [ "$edge_credit" -gt "$edge_cap" ] && edge_credit="$edge_cap"
     if [ "$edge_credit" -gt 0 ] && [ -n "$edge_id" ]; then
         bucket_id="$edge_id"; bucket_title="$edge_title"; bucket_date="$edge_date"
         bucket=$((bucket+edge_credit))
@@ -177,7 +197,14 @@ wait_next() {
             ;;
         reading)
             if [ "$HAS_GS" -eq 1 ]; then
-                lipc-wait-event -s "$wait_seconds" com.lab126.powerd goingToScreenSaver >/dev/null 2>&1
+                # v2.5：失败兜底（照抄 locked 时间差模式）——lipc-wait-event 异常立即返回时
+                #   补睡到周期满，防忙循环（CPU 拉满的耗电炸弹）；事件触发(exit 0)/超时(睡满)不受影响。
+                _wr_t0="$(date +%s)"
+                if ! lipc-wait-event -s "$wait_seconds" com.lab126.powerd goingToScreenSaver >/dev/null 2>&1; then
+                    _wr_t1="$(date +%s)"
+                    _wr_rem=$((wait_seconds-(_wr_t1-_wr_t0)))
+                    [ "$_wr_rem" -gt 0 ] && sleep "$_wr_rem"
+                fi
             else
                 sleep 30
             fi
@@ -218,7 +245,7 @@ while :; do
             current_id="$book_id"; current_title="$book_title"
         fi
         if [ "$was_reader" -eq 0 ]; then
-            add_edge_credit "$delta" "$current_id" "$current_title" "$today"
+            add_edge_credit "$delta" "$current_id" "$current_title" "$today" "$EDGE_CREDIT_OPEN_MAX"
             # v2.3：首次进入 reader app，写 first_open 到 book-meta.tsv（幂等：仅在该 bid 尚未存在时追加）
             if [ -n "$book_id" ] && [ "$book_id" != "unknown" ]; then
                 existing=$(awk -F'\t' -v b="$book_id" '$1==b{print; exit}' "$META" 2>/dev/null)
@@ -239,9 +266,9 @@ while :; do
             flush; write_report
         fi
         service_state="正在阅读"; bucket_id="$current_id"; bucket_title="$current_title"; bucket_date="$today"; bucket=$((bucket+delta))
-        if [ "$bucket" -ge "$SAVE_INTERVAL" ]; then flush; write_report; fi
+        if [ "$bucket" -ge "$SAVE_INTERVAL" ]; then flush; maybe_report; fi
     elif [ "$was_reader" -eq 1 ] && [ "$reader" -eq 0 ]; then
-        add_edge_credit "$delta" "$current_id" "$current_title" "$today"
+        add_edge_credit "$delta" "$current_id" "$current_title" "$today" "$EDGE_CREDIT_CLOSE_MAX"
         flush
         [ "$power" = "active" ] && service_state="已退出阅读" || service_state="锁屏暂停"
         write_report

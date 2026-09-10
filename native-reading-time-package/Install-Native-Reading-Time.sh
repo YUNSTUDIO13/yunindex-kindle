@@ -25,7 +25,7 @@ export_install_log() { [ -f "$INSTALL_LOG" ] && cp "$INSTALL_LOG" "/mnt/us/LOG-i
 fail() { echo "$(date): ERROR: $1" | tee -a "$INSTALL_LOG"; export_install_log; toast "Installation failed: $1"; exit 1; }
 
 mkdir -p "$BASE"
-echo "$(date): installer v2.4.2 (counted-flash) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
+echo "$(date): installer v2.5 (single-instance-lock + cache-atomic-write + python-path-removal) entered, uid=$(id -u), PKG=$PKG, args=$*" >> "$INSTALL_LOG"
 
 # ;log runme 必须以 root 调用
 [ "$(id -u)" -eq 0 ] || fail "not running as root; use ;log runme"
@@ -47,8 +47,9 @@ lipc-set-prop com.lab126.powerd preventScreenSaver 0 >/dev/null 2>&1 || true
 [ -f "$PKG/FONT-LICENSE.txt" ] || fail "missing bundled font license"
 [ -f "$PKG/ui/dashboard_bg.png" ] || fail "missing single-page dashboard background PNG (expect at ui/)"
 [ -f "$PKG/ui/cover.png" ] || fail "missing scriptlet cover PNG (expect at ui/)"
-[ -f "$PKG/ui/compose.py" ] || fail "missing compose.py (expect at ui/)"
 [ -f "$PKG/ui/quotes.tsv" ] || fail "missing quotes.tsv (expect at ui/)"
+# v2.4.3：排行页封面占位图（用户可同名覆盖此文件自定义）
+[ -f "$PKG/ui/book.png" ] || fail "missing book.png cover placeholder (expect at ui/)"
 
 # 检测 KPM 系统级 FBInk：兼容多路径（KPM / Véra / 旧版 KUAL）
 FBINK_CAND="/var/local/kmc/bin/fbink"
@@ -66,7 +67,7 @@ chmod 755 "$DAEMON.new" || fail "cannot chmod daemon"
 mv "$DAEMON.new" "$DAEMON" || fail "cannot install daemon"
 rm -f "$BASE/bin/reading-insights-server.sh"
 killall reading-insights-server.sh >/dev/null 2>&1 || true
-# v13.0：安装单页 dashboard 资源（背景 PNG + 书封面 cover.png + compose.py + 金句 tsv）
+# v13.0：安装单页 dashboard 资源（背景 PNG + 书封面 cover.png + 金句 tsv）
 # v2.2：书封面 cover.png 必须【先于】launcher 复制就位——launcher 头部 # Icon: 指向 cover.png，
 #       若 launcher 先落地、封面后到，SH_Integration 首次索引时读不到 Icon → 图书馆无封面。
 # v2.3：新增 ranking_bg.png（阅读排行页底图），与 dashboard_bg.png 同目录
@@ -74,9 +75,10 @@ mkdir -p "$UI_DIR" || fail "cannot create UI directory"
 cp "$PKG/ui/dashboard_bg.png" "$UI_DIR/dashboard_bg.png" || fail "cannot install dashboard_bg.png"
 cp "$PKG/ui/ranking_bg.png" "$UI_DIR/ranking_bg.png" || fail "cannot install ranking_bg.png"
 cp "$PKG/ui/cover.png" "$UI_DIR/cover.png" || fail "cannot install cover.png"
-cp "$PKG/ui/compose.py" "$UI_DIR/compose.py" || fail "cannot install compose.py"
 cp "$PKG/ui/quotes.tsv" "$UI_DIR/quotes.tsv" || fail "cannot install quotes.tsv"
-chmod 644 "$UI_DIR"/*.png "$UI_DIR/compose.py" "$UI_DIR/quotes.tsv" || fail "cannot chmod UI assets"
+# v2.4.3：封面占位图；设备上直接覆盖 /mnt/us/reading-time/ui/book.png 即换图，无需重装
+cp "$PKG/ui/book.png" "$UI_DIR/book.png" || fail "cannot install book.png"
+chmod 644 "$UI_DIR"/*.png "$UI_DIR/quotes.tsv" || fail "cannot chmod UI assets"
 
 cp "$PKG/Yunindex阅读统计.sh" "$VIEWER" || fail "cannot install dashboard launcher"
 chmod 755 "$VIEWER" || fail "cannot chmod dashboard launcher"
@@ -94,18 +96,6 @@ rm -f "$FONT_DIR/DroidSansFallback.ttf"
 cp "$PKG/FONT-LICENSE.txt" "$FONT_DIR/FONT-LICENSE.txt" || fail "cannot install font license"
 chmod 644 "$FONT_DIR"/* || fail "cannot chmod font files"
 
-# v13.0：探测设备是否具备 python3 + Pillow（快通道）。缺失仅降级为纯 fbink 慢路径，不致命但给出提示。
-PIL_OK=0
-for _c in python3 python; do
-    _p=$(command -v "$_c" 2>/dev/null)
-    [ -n "$_p" ] && "$_p" -c "import PIL" >/dev/null 2>&1 && { PIL_OK=1; break; }
-done
-if [ "$PIL_OK" -eq 1 ]; then
-    echo "$(date): PIL available -> fast path enabled" >> "$INSTALL_LOG"
-else
-    echo "$(date): WARNING PIL not found -> will use slow fbink path" >> "$INSTALL_LOG"
-    toast "Installed: 未检测到 Pillow，已切换慢速渲染"
-fi
 
 # 修复：data 文件自建（保证 dashboard 即便 daemon 没起来也能开）
 [ -f "$BASE/reading-time.tsv" ] || printf 'date\tbook_id\tseconds\ttitle\tstatus\tprogress\n' > "$BASE/reading-time.tsv" || fail "cannot seed reading-time.tsv"
@@ -155,7 +145,7 @@ trap - EXIT INT TERM HUP
 sleep 2
 if /sbin/initctl status "$JOB" 2>/dev/null | grep -q 'start/running'; then
     echo "$(date): installed and running" | tee -a "$INSTALL_LOG"
-    toast "Yunindex阅读统计 v2.4 installed"
+    toast "Yunindex阅读统计 v2.5 installed"
     export_install_log
     exit 0
 fi

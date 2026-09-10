@@ -2,6 +2,109 @@
 
 > v2.4：跨年归档 + 全链路提速。v2.3：阅读排行页（rank）首发。Dashboard 按年统计；Ranking 强制跨年汇总，不串味。
 
+## ✦ v2.5（2026-09-10）排行空白根因修复 + 删除 python 死路径 + 计时精度大修
+
+**根因**（真机 rank-debug.log 实锤）：Vera/KPM 偶发同秒重复拉起 launcher（`rank_start`/`dashboard_start`
+同时间戳成对出现）→ 两个并发实例共用同一个 `RANK_CACHE.tmp` → 竞态把聚合缓存写成「仅 header」→
+后续 HIT 该缓存时本页行数=0 → 排行整页空白。这解释了「切日均正常（换 key 重建）、来回切又空白
+（回到坏缓存）、首次进入空白（首建即被并发写坏）」的全部症状。
+
+1. **单实例锁「后来者接管」**：launcher 入口 mkdir 原子锁 + PID 文件。旧实例存活时 kill 接管
+   （TERM→3s→-9），杀触发旧实例 EXIT trap 顺带 restore_system_ui——同时根治真机实锤的另一症状：
+   反复快速打开/退出后旧实例 trap 卡在 lipc 阻塞里僵死滞留，KPM 认为 scriptlet 仍在运行，
+   再点图标闪一下回主页、永不 exec 新进程（只能锁屏重置）。3 次抢锁失败兜底放行，
+   宁可放行也不让用户打不开。本地模拟活进程持锁场景验证接管成功。
+2. **缓存原子写**：`RANK_CACHE.tmp` 加 PID 后缀（`.tmp.$$`），拼 header 后 `mv` 原子替换——
+   并发实例互不踩踏，读者只会见到完整的旧/新缓存。
+3. **坏缓存自愈**：HIT 校验追加「数据行数 ≤1 视为坏缓存 → 强制重建」——设备上已存在的坏缓存
+   无需手动删除，打开一次排行页即自动重建。
+4. **删除全部 python 路径**（launcher 1813→1477 行）：PY3 探测段、calc/排行 python heredoc、
+   FAST_PY 探测段（每次启动 find 扫描 7 个目录找 PIL 的开销一并消除）、compose.py 快通道分支、
+   `ui/compose.py` 文件、安装脚本 PIL 探测与 compose.py 拷贝/校验，全链路清干净。真机
+   `fast path OFF python=` 证实 KPW6/Vera 5.19.03 无 python3，这些代码从未执行；统计与渲染统一
+   awk + fbink 单路径，双口径漂移风险消除。`_diagnose.sh` 的 python 环境探测（排障信息用）与
+   `UNINSTALL.sh` 的 `.fast_python` 历史缓存清理予以保留。
+
+**验证**：双脚本 sh -n 通过；删除后重新提取 calc/排行两段 awk 本地跑样本数据（含归档行、空书名、
+daily/duration 双排序）输出全部正确。
+
+### 附：同期完成的计时精度大修（原内部编号 v2.4.8，未单独发布，随 v2.5 一起发布）
+
+**根因**（本地 1:1 模拟复现：9 分钟连续阅读只入账 485s ≈ 8.1 分钟；真机叠加开书延迟即用户实测的「显示 6 分钟」）：
+
+**daemon（采集端）**：
+1. 阅读中落账周期 120s→**60s**：合书尾巴损失减半（旧版合书瞬间 daemon 在睡，最后一段 ≤120s 从未进账）。
+2. 边缘补偿合理化：开书/合书 `delta/2` 旧版统一封顶 **5s** → 分开封顶 **15s/30s**（= 各自轮询半周期，无偏估计）。
+3. `lipc-wait-event` reading 分支补**失败兜底**（时间差补睡，照抄 locked 模式）——旧版异常即忙循环，CPU 拉满的耗电炸弹。
+4. flush **写成功才清零 bucket**——旧版 `|| true` 后无条件清零，USB 占用/磁盘满时整段静默丢账。
+5. write_report 降频 600s（合书/切书/跨天/退出仍即时）——抵消唤醒翻倍的 fork 开销，**耗电净账持平**：60 轮×轻 flush + 6 次报告 vs 旧 30 轮×(flush+报告)。
+
+**launcher（统计端）**：
+6. **排行日均改定格口径**（用户拍板）：`累计秒 ÷（末读日−首读日+1）`，末读日=tsv 最后有记录的日子——**读完的书日均从此静止**，不再被时间稀释；在读书口径不变。python/awk 双路径同改，rank 缓存 key v2→v3 自动作废旧口径。
+7. **在读/读完按书名归并**（与 rank 同口径）：删书重装换新 key 不再幻影双计。
+8. **progress 回填改 cdeKey 优先**（与 daemon book_progress 同口径）：旧版仅按书名匹配，书名差异即 MISS → 旧行 st 滞留 reading → 同书双计的根因之一。
+
+9. **显示层分钟四舍五入**（fmt_hm / rank python `_hh` / rank awk `hhmm` 三处同改）：旧版截断秒数，8.5 分钟显示 "0h8m" 加剧偏少观感；现 ±30s 进位，与采集端精度对齐（510s→"0h9m"）。
+
+**复核结论（统计端其余指标全部正确，未动）**：今日/本周（蔡勒周一换算）/本月日均（÷当月已过天数）/连续天数（今天未读从昨日起倒数，归档日清单展开）/阅读天数/本年累计；归档折叠前后全等校验+回滚。
+
+**验证**：daemon 逻辑 1:1 模拟（桩 lipc，真时钟 9 分钟场景）——旧版出账 485s（复现「9 分钟变 8 分钟」，真机叠加开书延迟即 6 分钟），v2.4.8 出账 510s=8.5 分钟、显示 "0h9m"；日均定格公式 python 断言 PASS（读完书 352s/天→3600s/天定格，在读书不变）；双脚本 sh -n 通过。
+
+## ✦ v2.4.7（2026-09-09）日志治理：debug.flag 门控
+
+- 稳定期不再每次退出都往 USB 根拷 4 份日志（`LOG-dashboard-launch/fbink/dashboard-touch/install.log`）——排障通道改为门控：USB 根放一个 `debug.flag` 空文件即恢复全量拷贝（与 diagnose.flag / uninstall.flag 同套习惯）。
+- exit-watchdog 的 USB 根双写同门控；`$BASE` 内日志本就有 200KB 自截断，无需清理。
+- 归档报告 `LOG-archive.log`（每月至多一次、数据自检凭证）与安装日志不受影响。
+
+## ✦ v2.4.6（2026-09-09）退出回图书馆·终局：KPP 图书馆视图
+
+**真机证据链**（v2.4.5 实测日志）：
+
+1. 合书返回落点 = `com.lab126.KPPMainApp`（exit-watchdog 实测）——5.14.2+ 起主页/图书馆合一于 KPP（React Native 桌面），合书只能回其默认视图（主页），到不了图书馆 tab；
+2. v2.4.5 看守把 KPPMainApp 误判为「未回系统界面」（只认 booklet 字样）→ 误补跳 `booklet.home` → 用户看到「几秒后又刷新一下」。
+
+**方案**：扶正项目 v2.0 起就携带、但从未被真正执行过的 URI——
+
+```
+lipc-set-prop com.lab126.appmgrd start "app://com.lab126.KPPMainApp?view=KPP_LIBRARY"
+```
+
+（旧链首条 `start home` 恒「成功」把它永久拦截。）动态探测到独立图书馆 booklet 时仍走 `start` 直启（老固件兼容）。看守修正：activeApp 含 `booklet` **或** `KPP` 均视为已回系统界面；皆无才补跳 `booklet.home` 防死屏。
+
+## ✦ v2.4.5（2026-09-09）退出回图书馆：合书语义（已废，见 v2.4.6）
+
+**根因链（三连）**：v2.4.3 臆测 appreg 列名 `appId`（实为 `handlerIds.handlerId`）→ v2.4.4 修正列名后真机实测 `lib_id=未注册`——**5.19 固件没有独立图书馆 booklet**，图书馆只是主页 booklet（`com.lab126.booklet.home`）内的 tab，`start` 任何 `app://` URI 都落不到图书馆视图。此路本就不通。
+
+**方案**：scriptlet 本是从图书馆点开的「书」，退出即应「合书归架」——
+
+1. **不再主动 start 任何界面**：脚本 `exit 0` → sh_integration graceful exit（Hotfix v2.3.1+ 修复的 app 正常退出路径）→ 框架合上 scriptlet，自然返回启动来源（图书馆），home booklet 激活时自绘，无需手动刷屏。
+2. **防死屏保险丝**：后台看守 6 秒后查 `lipc-get-prop com.lab126.appmgrd activeApp`，若仍停在本插件（自然返回失败）→ 补跳主页。结果双写 `dashboard-launch.log` 与 USB 根 `LOG-dashboard-launch.log`（`exit-watchdog activeApp=[...]` 行）。
+3. **兼容老固件**：动态探测到独立图书馆 booklet（`LIKE '%booklet%library%'` 命中）时仍走 `start` 直启。
+
+## ✦ v2.4.4（2026-09-09）热修：退出仍回主页
+
+**根因**：v2.4.3 的图书馆探测臆测了 appreg.db 列名 `appId`——真实表为 `handlerIds`、单列 `handlerId`（kindlemodding.org appreg 文档实证）。SQL 恒报 `no such column: appId`（被 `2>/dev/null` 吞掉）→ 探测恒失败 → `EXIT_APP` 恒回退主页。本地建模拟库复现确认。
+
+**修复**：
+
+1. **查询改动态自报**，不再硬编码任何 ID：`SELECT handlerId FROM handlerIds WHERE handlerId LIKE '%booklet%library%' ORDER BY handlerId LIMIT 1`——设备上注册了什么就用什么，固件改版（图书馆 ID 变更）自动适应。
+2. 查不到（该固件图书馆并入主页、无独立 booklet）或 sqlite3 不可用 → 安全回退主页，不死屏。
+3. 探测结果写日志：`exit → <目标> (lib_id=<命中ID|未注册> sqlite3=<路径|NONE>)`，USB 根 `LOG-dashboard-launch.log` 可直接查证。
+
+## ✦ v2.4.3（2026-09-09）排行页封面占位图 + 退出返回图书馆
+
+**封面占位图（book.png）**
+
+- 排行页书籍封面搜索落空时（无 asin、p_thumbnail/UUID/各拼法路径全部 MISS）统一显示占位图 `ui/book.png`；占位图本身缺失则维持留空，不影响其余渲染。
+- `thumb=""` 初始化提到 asin 判断块外（旧版无 asin 的书 thumb 未定义），绘制块随之外移，逻辑等价。
+- **用户可自行换图**：① 安装包 `ui/book.png` 同名覆盖后重装；② 设备上直接覆盖 `/mnt/us/reading-time/ui/book.png`，下次渲染即生效（无需重装）。
+- 安装脚本同步：payload 检查 + 拷贝补入 `book.png`（缺文件时明确报错，不再静默跳过）。
+
+**退出返回图书馆**
+
+- 旧行为：× 关闭 / 2 分钟超时后 `lipc start app://com.lab126.booklet.home` 回主页；附带的 `KPP_LIBRARY` 兜底链因 lipc start 异步 fire-and-forget 恒不触发。
+- 新行为：优先唤起 `com.lab126.booklet.library`（本插件自图书馆 scriptlet 启动，回原地最顺手）；以 appreg.db `HandlerIds` 表判注册（KUAL 同款注册表），未注册/查询失败自动回退主页。退出目标写入 `dashboard-launch.log` 可查证。
+
 ## ✦ v2.4.2（2026-09-08）计数制 flash：少闪不糊
 
 **问题**：v2.3.34 起每次渲染 commit 都带 `-f` 全屏黑闪，「点一下闪一下」手感差；但完全去 flash 又会在 KPW6 上残影累积发糊（v2.3.34 实测教训）。
