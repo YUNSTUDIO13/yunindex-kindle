@@ -223,7 +223,8 @@ if command -v lipc-wait-event >/dev/null 2>&1; then
     [ $((_gs_t1-_gs_t0)) -ge 1 ] && HAS_GS=1
 fi
 previous="$(date +%s)"; was_reader=0; current_id=""; current_title=""; service_state="等待阅读"; last_state=""; last_state_write=0
-echo "$(date): upstart service started, pid=$$, timing=event-driven-reader-active-screen, model=v2.4-6col(归档行7col由launcher生成), goingToScreenSaver=$HAS_GS" >> "$LOG"
+# v2.5：启动日志也纳入 USB 根 debug.flag 门控（默认静默；与 launcher 同一开关）
+[ -f /mnt/us/debug.flag ] && echo "$(date): upstart service started, pid=$$, timing=event-driven-reader-active-screen, model=v2.4-6col(归档行7col由launcher生成), goingToScreenSaver=$HAS_GS" >> "$LOG"
 write_report
 
 while :; do

@@ -67,7 +67,14 @@ for _lf in "$LOG" "$BASE/fbink.log" "$BASE/rank-debug.log" "$BASE/dashboard-touc
         tail -c 102400 "$_lf" > "$_lf.trunc" 2>/dev/null && mv "$_lf.trunc" "$_lf"
     fi
 done
-exec >> "$LOG" 2>&1
+# v2.5：统一调试开关——USB 根放 debug.flag 空文件才产出日志（与 v2.4.7 根目录日志门控同一开关）；
+#   默认全静默，不再往 launch/rank-debug 刷 perf/action 记录。fail() 致命错误始终显式写 LOG，不受影响。
+DEBUG_FLAG="/mnt/us/debug.flag"
+if [ -f "$DEBUG_FLAG" ]; then
+    exec >> "$LOG" 2>&1
+else
+    exec >> /dev/null 2>&1
+fi
 
 # v2.5：单实例锁「后来者接管」——Vera/KPM 偶发同秒重复拉起 launcher（真机 rank-debug 实锤：
 #   rank_start/dashboard_start 同时间戳成对）；并发双跑竞态 RANK_CACHE.tmp → 缓存写成仅 header
@@ -244,7 +251,7 @@ commit_screen() {
 }
 
 fail() {
-    echo "$(date): ERROR: $1"
+    echo "$(date): ERROR: $1" >> "$LOG" 2>/dev/null   # 致命错误始终落盘（debug.flag 门控之外）
     if [ -x "$FBINK" ]; then
         "$FBINK" -q -b -B WHITE -k "top=0,left=0,width=1264,height=1680" 2>/dev/null || true
         fb_text_at 24 600 0 "$LOGICAL_W" BOLD BLACK - "$1" 2>/dev/null || true
@@ -619,7 +626,7 @@ PERF_LOG="$BASE/rank-debug.log"
 # v2.3.33：_tm/_csec 改 shell 内建读 /proc/uptime（原每次 fork awk；一页 ~30 次打点 fork 全灭）。
 #   输出格式与旧版一致（秒.厘秒 / 厘秒整数），rank-debug.log 可比照历轮数据。
 #   ★_nowcs 直接赋值 CSEC（无 $() 子 shell）；_f 前补 1 防前导零被当八进制（busybox ash $((08)) 报错）。
-_tm() { read -r _u _i < /proc/uptime 2>/dev/null && echo "  [perf $_u] $1" >> "$PERF_LOG" 2>/dev/null; }
+_tm() { [ -f "$DEBUG_FLAG" ] && { read -r _u _i < /proc/uptime 2>/dev/null && echo "  [perf $_u] $1" >> "$PERF_LOG" 2>/dev/null; } || true; }
 _nowcs() { read -r _u _i < /proc/uptime 2>/dev/null || { CSEC=0; return; }; _w=${_u%.*}; _f=${_u#*.}; CSEC=$(( _w * 100 + 1${_f:-00} - 100 )); }
 
 # v13.1 R34：把「计算 + 渲染」函数化，支持年份切换后按新 hyear 重算四卡并重绘整页。
@@ -860,12 +867,12 @@ render_ranking() {
     # v2.3.10：排行页调试日志（真机打开一次排行页即可 USB 取回 /mnt/us/reading-time/rank-debug.log）
     RANK_DEBUG="$BASE/rank-debug.log"
     # v2.3.32：缓存/调试开关
-    DBG_FLAG="$BASE/.rank-debug.flag"
+    # v2.5：调试点位开关统一为 USB 根 debug.flag（原 .rank-debug.flag 废弃）
     RANK_CACHE="$BASE/.rank_all.tsv"
     CC_ALL="$BASE/.cc_all.tsv"
     COVER_MAP="$BASE/.cover_map.tsv"   # v2.3.32：封面源还原 v2.3.23（MISS 生成，HIT 复用）
     UUID_MAP="$BASE/.uuid_map.tsv"
-    _dbg() { [ -f "$DBG_FLAG" ] && { echo "$1" >> "$RANK_DEBUG" 2>/dev/null; } || true; }
+    _dbg() { [ -f "$DEBUG_FLAG" ] && { echo "$1" >> "$RANK_DEBUG" 2>/dev/null; } || true; }
     # v2.3.32：无条件毫秒打点（/proc/uptime 浮点秒；共 6 点）。
     #   输出到 rank-debug.log：测速后拷回，一次看清 数据层 vs 底图 vs 行渲染 各占多少。
     # v2.3.33：改用全局内建 _tm（read < /proc/uptime，零 fork；格式不变）。
@@ -920,11 +927,11 @@ render_ranking() {
                 }' "$RANK_CACHE")
             RANK_TOTAL=$(awk -F'\t' '/^__RANK_TOTAL__/{print $2; exit}' "$RANK_CACHE")
             RANK_TOTAL=${RANK_TOTAL:-0}
-            echo "  [v2.3.29] cache=HIT key=$_key 本页行数=$(printf '%s\n' "$RANK_LINES" | grep -c . )" >> "$RANK_DEBUG"
+            _dbg "  cache=HIT key=$_key 本页行数=$(printf '%s\n' "$RANK_LINES" | grep -c . )"
         else
         # ===== 缓存失效/首次：全量重建（sqlite3 dump + awk 全扫一次）=====
         rm -f "$CC_ALL" "$RANK_CACHE" "$COVER_MAP" "$UUID_MAP"
-        echo "  [v2.3.32] cache=MISS/build key=$_key" >> "$RANK_DEBUG"
+        _dbg "  cache=MISS/build key=$_key"
         _dbg "  RANK_SORT=$RANK_SORT RANK_OFFSET=$RANK_OFFSET TS=$TS"
         _dbg "  DATA=$DATA 存在=$([ -f "$DATA" ] && echo Y || echo N) 行数=$_tsv_n"
         _dbg "  META 存在=$([ -f "$BASE/book-meta.tsv" ] && echo Y || echo N) 行数=$_meta_n"
@@ -1293,7 +1300,7 @@ fb_text_center 40 1564 929 1079 REGULAR BLACK "$((RANK_OFFSET+1)) / $total_pages
                 if [ -n "$_tp" ] && [ -f "$_tp" ]; then thumb="$_tp"; break; fi
             done
             if [ "$idx" = "1" ]; then
-                echo "  [封面] 第 $idx 行 asin=$asin key=${_key:-<无>} uuid=${uuid:-<无>} p_thumbnail=${_cov:-<无>} 命中=${thumb:-<无>}" >> "$RANK_DEBUG"
+                _dbg "  [封面] 第 $idx 行 asin=$asin key=${_key:-<无>} uuid=${uuid:-<无>} p_thumbnail=${_cov:-<无>} 命中=${thumb:-<无>}"
             fi
         fi
         # v2.4.3：封面搜索落空（含无 asin 的书）→ 统一占位图；占位图本身缺失则仍留空
@@ -1308,7 +1315,7 @@ fb_text_center 40 1564 929 1079 REGULAR BLACK "$((RANK_OFFSET+1)) / $total_pages
             # v2.3.33：_nowcs 内建取值（零 fork）
             _nowcs; _g0=$CSEC
             "$FBINK" -q -b -g "file=$thumb,x=150,y=$((row_top+28)),w=120,h=165,dither" 2>>"$FBINK_LOG" || true
-            _nowcs; echo "  [row $idx] cover_ms=$(( CSEC - _g0 ))" >> "$RANK_DEBUG"
+            _nowcs; _dbg "  [row $idx] cover_ms=$(( CSEC - _g0 ))"
         fi
         # v2.3.32 行级打点：text_ms = 本行文字+进度条整段耗时（序号→日均 7-9 次 fbink -t/-k）
         _nowcs; _x0=$CSEC
@@ -1344,7 +1351,7 @@ fb_text_center 40 1564 929 1079 REGULAR BLACK "$((RANK_OFFSET+1)) / $total_pages
         # v2.3.32：right_edge=1167（=1130+37）→ 实机 vp_x_right ≈1130（fbink OT mode 右缘 ~37vp 内部 padding 补偿，沿用不动）
         fb_text_right 38 $((row_top + 67)) 1167 BOLD BLACK "$dur_str"
         fb_text_right 32 $((row_top + 111)) 1167 REGULAR INK_SOFT "日均 $daily_str"
-        _nowcs; echo "  [row $idx] text_ms=$(( CSEC - _x0 )) 书=$title" >> "$RANK_DEBUG"
+        _nowcs; _dbg "  [row $idx] text_ms=$(( CSEC - _x0 )) 书=$title"
     done
 
     # ---- 7. commit ----
@@ -1390,7 +1397,9 @@ render_dashboard
 while :; do
     action=""
     if [ -r "$TOUCH_READER" ] && command -v lua >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-        action="$(timeout 120 lua "$TOUCH_READER" "$TOUCH" "$BASE/dashboard-touch.log" "$PAGE" "$hyear" 0 0 1272 1696 2>/dev/null)" || action="exit"
+        # v2.5：触摸日志同走 debug.flag 门控（关闭时 lua 写 /dev/null，零产出）
+        _TLOG="$BASE/dashboard-touch.log"; [ -f "$DEBUG_FLAG" ] || _TLOG="/dev/null"
+        action="$(timeout 120 lua "$TOUCH_READER" "$TOUCH" "$_TLOG" "$PAGE" "$hyear" 0 0 1272 1696 2>/dev/null)" || action="exit"
     else
         sleep 120
         action="exit"
@@ -1446,7 +1455,7 @@ if [ -n "$_LIB_ID" ]; then
 else
     _EXIT_TO="app://com.lab126.KPPMainApp?view=KPP_LIBRARY"
 fi
-echo "$(date): exit → lib_id=${_LIB_ID:-未注册} 目标=$_EXIT_TO" >> "$LOG"
+[ -f "$DEBUG_FLAG" ] && echo "$(date): exit → lib_id=${_LIB_ID:-未注册} 目标=$_EXIT_TO" >> "$LOG"
 # v2.4.7：USB 根日志拷贝改 debug 门控——稳定期每次退出拷 4 份日志纯属积灰；
 #   USB 根放一个 debug.flag 空文件即恢复全量拷贝（排障通道保留）。$BASE 内日志有 200KB 自截断，无需管。
 _DEBUG=""
@@ -1460,7 +1469,7 @@ restore_system_ui
 lipc-set-prop com.lab126.appmgrd start "$_EXIT_TO" >/dev/null 2>&1 || true
 ( sleep 6
   _cur=$(lipc-get-prop com.lab126.appmgrd activeApp 2>/dev/null)
-  echo "$(date): exit-watchdog activeApp=[$_cur]" >> "$LOG"
+  [ -f "$DEBUG_FLAG" ] && echo "$(date): exit-watchdog activeApp=[$_cur]" >> "$LOG"
   [ -n "$_DEBUG" ] && echo "$(date): exit-watchdog activeApp=[$_cur]" >> "/mnt/us/LOG-dashboard-launch.log"
   case "$_cur" in
       *booklet*|*KPP*) : ;;   # 已回系统界面（图书馆/主页），无需干预

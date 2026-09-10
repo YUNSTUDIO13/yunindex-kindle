@@ -25,6 +25,12 @@
    awk + fbink 单路径，双口径漂移风险消除。`_diagnose.sh` 的 python 环境探测（排障信息用）与
    `UNINSTALL.sh` 的 `.fast_python` 历史缓存清理予以保留。
 
+5. **日志全量门控**：默认零日志噪音。USB 根放 `debug.flag` 空文件才恢复全量产出（与 v2.4.7
+   根目录日志拷贝同一开关）。门控对象：launch/action 记录（exec 重定向）、perf 打点（_tm）、
+   rank-debug 全部点位（_dbg，原 .rank-debug.flag 废弃并入）、触摸日志（debug 关闭时 lua 写
+   /dev/null）、exit 诊断、daemon 启动行。例外：`fail()` 致命错误始终写 dashboard-launch.log
+   （排障命脉）；fbink.log 只收 fbink 错误流（平时为空），不门控。
+
 **验证**：双脚本 sh -n 通过；删除后重新提取 calc/排行两段 awk 本地跑样本数据（含归档行、空书名、
 daily/duration 双排序）输出全部正确。
 
