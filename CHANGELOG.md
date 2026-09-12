@@ -26,9 +26,11 @@
    `UNINSTALL.sh` 的 `.fast_python` 历史缓存清理予以保留。
 
 5. **阅读态功耗再降 ~85%**（daemon 进程创建 360 次/小时 → ~50 次，计时精度不变）：
-   - 同书解析缓存：每周期照查 activeContext/metadata 保证换书即刻识别，但串没变就跳过
-     read_book 的 6 步 sed/awk 解析，直接沿用上次的 book_id/title（本地模拟：同书 10 分钟仅
-     解析 1 次，切书立即重解析 ✓）；
+   - 同书解析缓存：每周期只查 activeContext（1 次 prop）作换书指纹，串没变就跳过 read_book
+     全部解析（含 metadata 查询，再省 1 fork/周期）；metadata 是完整 JSON 可能带动态字段，
+     不宜作缓存键。模拟：同书 10 分钟仅解析 1 次，切书立即重解析 ✓；
+   - 进度查询失败自愈：book_progress 返回空时不更新降频标记，下周期强制重试，
+     避免 sqlite3 瞬态失败导致进度连空 5 分钟 ✓；
    - 进度查询降频：cc.db 的 progress 是慢变量，且 launcher backfill 开面板时会以最新值统一
      校正，daemon 侧改为每 5 次落账（≈5 分钟）或换书时真查（模拟：16 次落账仅查 4 次 ✓），
      sqlite3 开库 60 次/小时 → ≤12 次；

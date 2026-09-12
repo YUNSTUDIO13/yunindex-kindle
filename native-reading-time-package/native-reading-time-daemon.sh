@@ -148,8 +148,9 @@ flush() {
     if [ "$bucket" -gt 0 ] && [ -n "$bucket_id" ]; then
         _flush_n=$((_flush_n+1))
         if [ "$bucket_id" != "$_prog_bid" ] || [ $((_flush_n % 5)) -eq 1 ]; then
-            _prog_val="$(book_progress "$bucket_id" "$bucket_title")"
-            _prog_bid="$bucket_id"
+            _pv="$(book_progress "$bucket_id" "$bucket_title")"
+            # 查询失败（返回空）不更新标记——下周期强制重试，避免瞬态失败导致进度连空 5 分钟
+            [ -n "$_pv" ] && { _prog_val="$_pv"; _prog_bid="$bucket_id"; }
         fi
         prog="$_prog_val"
         st="reading"
@@ -245,13 +246,14 @@ while :; do
 
     if [ "$reader" -eq 1 ]; then
         interval="$READING_INTERVAL"; wait_mode="reading"
-        context="$(prop com.lab126.appmgrd activeContext)"; metadata="$(prop com.lab126.yjr.annotations getCurrentBookMetadata)"
-        # v2.5：同书解析缓存——"问系统拿串"（上面 2 次 prop）每周期照做，保证换书即刻识别；
-        #   串没变说明还是同一本书，跳过 read_book 的 6 步解析（sed/awk），直接沿用上次的 book_id/title。
-        _cm="$context|$metadata"
-        if [ "$_cm" != "$_last_cm" ]; then
+        context="$(prop com.lab126.appmgrd activeContext)"
+        # v2.5：同书解析缓存——每周期只查 activeContext（1 次 prop）作为换书指纹，书没变就
+        #   跳过 read_book 全部解析（含 metadata 查询，又省 1 fork/周期）；书没变 context 必不变。
+        #   metadata 是完整 JSON 可能带动态字段，不宜作缓存键，仅在实际解析时按需获取。
+        if [ "$context" != "$_last_context" ]; then
+            metadata="$(prop com.lab126.yjr.annotations getCurrentBookMetadata)"
             read_book "$context" "$metadata"
-            _last_cm="$_cm"
+            _last_context="$context"
         fi
         if [ "$was_reader" -eq 1 ] && [ -n "$current_id" ] && [ "$current_id" != "$book_id" ]; then
             flush; service_state="切换书籍"; write_report
