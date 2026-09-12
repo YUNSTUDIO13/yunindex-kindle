@@ -25,7 +25,15 @@
    awk + fbink 单路径，双口径漂移风险消除。`_diagnose.sh` 的 python 环境探测（排障信息用）与
    `UNINSTALL.sh` 的 `.fast_python` 历史缓存清理予以保留。
 
-5. **日志全量门控**：默认零日志噪音。USB 根放 `debug.flag` 空文件才恢复全量产出（与 v2.4.7
+5. **阅读态功耗再降 ~85%**（daemon 进程创建 360 次/小时 → ~50 次，计时精度不变）：
+   - 同书解析缓存：每周期照查 activeContext/metadata 保证换书即刻识别，但串没变就跳过
+     read_book 的 6 步 sed/awk 解析，直接沿用上次的 book_id/title（本地模拟：同书 10 分钟仅
+     解析 1 次，切书立即重解析 ✓）；
+   - 进度查询降频：cc.db 的 progress 是慢变量，且 launcher backfill 开面板时会以最新值统一
+     校正，daemon 侧改为每 5 次落账（≈5 分钟）或换书时真查（模拟：16 次落账仅查 4 次 ✓），
+     sqlite3 开库 60 次/小时 → ≤12 次；
+   - 顺手兑现文档承诺：持续阅读 delta 容错上限 150s→180s（CHANGELOG 此前已声明但代码漏改）。
+6. **日志全量门控**：默认零日志噪音。USB 根放 `debug.flag` 空文件才恢复全量产出（与 v2.4.7
    根目录日志拷贝同一开关）。门控对象：launch/action 记录（exec 重定向）、perf 打点（_tm）、
    rank-debug 全部点位（_dbg，原 .rank-debug.flag 废弃并入）、触摸日志（debug 关闭时 lua 写
    /dev/null）、exit 诊断、daemon 启动行。例外：`fail()` 致命错误始终写 dashboard-launch.log

@@ -141,9 +141,17 @@ maybe_report() {
 }
 
 bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
+# v2.5：进度查询降频——progress 是慢变量，且 launcher backfill 开面板时会以 cc.db 最新值统一校正，
+#   daemon 侧每 5 次落账（≈5 分钟）或换书时真查一次即可；每小时 sqlite3 开库 60 次 → ≤12 次。
+_flush_n=0; _prog_bid=""; _prog_val=""
 flush() {
     if [ "$bucket" -gt 0 ] && [ -n "$bucket_id" ]; then
-        prog="$(book_progress "$bucket_id" "$bucket_title")"
+        _flush_n=$((_flush_n+1))
+        if [ "$bucket_id" != "$_prog_bid" ] || [ $((_flush_n % 5)) -eq 1 ]; then
+            _prog_val="$(book_progress "$bucket_id" "$bucket_title")"
+            _prog_bid="$bucket_id"
+        fi
+        prog="$_prog_val"
         st="reading"
         [ "$prog" = "100" ] && st="finished"
         # v2.5：写成功才清零——旧版 `|| true` 后无条件清零，USB 占用/磁盘满时整段静默丢账
@@ -238,7 +246,13 @@ while :; do
     if [ "$reader" -eq 1 ]; then
         interval="$READING_INTERVAL"; wait_mode="reading"
         context="$(prop com.lab126.appmgrd activeContext)"; metadata="$(prop com.lab126.yjr.annotations getCurrentBookMetadata)"
-        read_book "$context" "$metadata"
+        # v2.5：同书解析缓存——"问系统拿串"（上面 2 次 prop）每周期照做，保证换书即刻识别；
+        #   串没变说明还是同一本书，跳过 read_book 的 6 步解析（sed/awk），直接沿用上次的 book_id/title。
+        _cm="$context|$metadata"
+        if [ "$_cm" != "$_last_cm" ]; then
+            read_book "$context" "$metadata"
+            _last_cm="$_cm"
+        fi
         if [ "$was_reader" -eq 1 ] && [ -n "$current_id" ] && [ "$current_id" != "$book_id" ]; then
             flush; service_state="切换书籍"; write_report
         fi
@@ -262,7 +276,7 @@ while :; do
         wait_mode="locked"
     fi
     service_state="等待阅读"
-    if [ "$was_reader" -eq 1 ] && [ "$reader" -eq 1 ] && [ "$delta" -gt 0 ] && [ "$delta" -le 150 ]; then
+    if [ "$was_reader" -eq 1 ] && [ "$reader" -eq 1 ] && [ "$delta" -gt 0 ] && [ "$delta" -le 180 ]; then
         if [ -n "$bucket_date" ] && [ "$bucket_date" != "$today" ]; then
             flush; write_report
         fi
