@@ -149,8 +149,14 @@ flush() {
         _flush_n=$((_flush_n+1))
         if [ "$bucket_id" != "$_prog_bid" ] || [ $((_flush_n % 5)) -eq 1 ]; then
             _pv="$(book_progress "$bucket_id" "$bucket_title")"
-            # 查询失败（返回空）不更新标记——下周期强制重试，避免瞬态失败导致进度连空 5 分钟
-            [ -n "$_pv" ] && { _prog_val="$_pv"; _prog_bid="$bucket_id"; }
+            if [ -n "$_pv" ]; then
+                _prog_val="$_pv"; _prog_bid="$bucket_id"
+            elif [ "$bucket_id" != "$_prog_bid" ]; then
+                # 换书后查不到进度（典型：cc.db 尚无该书条目）——清空，绝不沿用上一本书的进度；
+                # _prog_bid 不更新，下周期自动重试
+                _prog_val=""
+            fi
+            # 同书查询失败：沿用同书旧值（慢变量近似），_prog_bid 不更新下周期重试
         fi
         prog="$_prog_val"
         st="reading"
