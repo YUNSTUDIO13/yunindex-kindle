@@ -270,7 +270,7 @@ restore_system_ui() {
     lipc-set-prop com.lab126.winmgr hideStatusBar 0 >/dev/null 2>&1 || true
     lipc-set-prop com.lab126.powerd preventScreenSaver 0 >/dev/null 2>&1 || true
 }
-trap 'rm -rf "$LOCK_DIR" "$LOCK_FILE"; restore_system_ui' EXIT INT TERM HUP
+trap '[ -n "$_SS_WATCHER" ] && kill "$_SS_WATCHER" 2>/dev/null; rm -rf "$LOCK_DIR" "$LOCK_FILE"; restore_system_ui' EXIT INT TERM HUP
 
 # 必备资源检查
 [ -x "$FBINK" ] || { echo "FBInk not found at $FBINK"; exit 1; }
@@ -1389,6 +1389,27 @@ find_touch_device
 TOUCH_READER="$BASE/bin/reading-insights-touch.lua"
 
 lipc-set-prop com.lab126.powerd preventScreenSaver 1 >/dev/null 2>&1 || true
+
+# 锁屏即退出（修：面板开着时手动锁屏 → 解锁白屏卡死无法关闭）：后台 watcher 等
+#   goingToScreenSaver（daemon 同款事件，Vera 5.19.03 实测可用），触发即杀触摸读取器 lua——
+#   主循环命令替换返回非零 → action=exit，走与点 × 完全相同的正常退出路径（回图书馆+清理），
+#   无需 TERM 主进程。15s 循环杀覆盖「锁屏恰在渲染几秒内、lua 尚未启动」的窗口期；
+#   主进程已退（kill -0 失败）即收。无 lipc-wait-event 时不起 watcher，退回 120s 超时退出旧行为。
+_SS_WATCHER=""
+if command -v lipc-wait-event >/dev/null 2>&1; then
+    ( exec </dev/null >/dev/null 2>&1
+      lipc-wait-event com.lab126.powerd goingToScreenSaver >/dev/null 2>&1 || exit 0
+      _n=0
+      while [ "$_n" -lt 15 ]; do
+          # ps|awk 提取触摸读取器 PID（特征串匹配，避开 killall 可选 applet 的存在性风险）
+          for _p in $(ps 2>/dev/null | awk '/reading-insights-touch/ {print $1}'); do
+              kill -TERM "$_p" 2>/dev/null
+          done
+          kill -0 $$ 2>/dev/null || exit 0
+          sleep 1; _n=$((_n+1))
+      done ) &
+    _SS_WATCHER=$!
+fi
 
 # 首次渲染
 render_dashboard

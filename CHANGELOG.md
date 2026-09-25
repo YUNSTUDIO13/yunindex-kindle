@@ -2,6 +2,18 @@
 
 > v2.4：跨年归档 + 全链路提速。v2.3：阅读排行页（rank）首发。Dashboard 按年统计；Ranking 强制跨年汇总，不串味。
 
+## ✦ v2.5.2（未发布）锁屏白屏修复：锁屏即退出
+
+**根因**：面板开着时手动锁屏，launcher 仍阻塞在触摸读取循环里（`timeout 120 lua`），
+解锁后 fbink 绘制的界面已被屏保周期覆盖、系统又不为该 scriptlet 重绘 → 白屏且 × 无响应，
+只能等 120s 超时自愈。
+
+**修复**：launcher 主循环前起后台 watcher，`lipc-wait-event com.lab126.powerd goingToScreenSaver`
+（daemon 同款事件，Vera 5.19.03 实测可用）→ 触发即 `killall lua` 杀触摸读取器——主循环
+`action=exit`，走与点 × 完全相同的正常退出路径（回图书馆 URI + restore_system_ui + 释放锁），
+锁屏瞬间插件即干净关闭，解锁后落在图书馆页。15s 循环杀覆盖「锁屏恰在渲染期、lua 未启动」的
+窗口期；trap 追加 watcher 清理；无 `lipc-wait-event` 时退回旧行为（120s 无操作超时退出）。
+
 ## ✦ v2.5.1（2026-09-13）阅读态功耗再降 ~85% + 换书进度串书修复
 
 1. **同书解析缓存**：daemon 每周期只查 1 次 `activeContext` 作换书指纹，书没变就跳过 `read_book`
