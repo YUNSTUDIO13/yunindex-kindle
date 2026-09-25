@@ -1390,23 +1390,25 @@ TOUCH_READER="$BASE/bin/reading-insights-touch.lua"
 
 lipc-set-prop com.lab126.powerd preventScreenSaver 1 >/dev/null 2>&1 || true
 
-# 锁屏即退出（修：面板开着时手动锁屏 → 解锁白屏卡死无法关闭）：后台 watcher 等
-#   goingToScreenSaver（daemon 同款事件，Vera 5.19.03 实测可用），触发即杀触摸读取器 lua——
-#   主循环命令替换返回非零 → action=exit，走与点 × 完全相同的正常退出路径（回图书馆+清理），
-#   无需 TERM 主进程。15s 循环杀覆盖「锁屏恰在渲染几秒内、lua 尚未启动」的窗口期；
-#   主进程已退（kill -0 失败）即收。无 lipc-wait-event 时不起 watcher，退回 120s 超时退出旧行为。
+# 锁屏即退出（修：面板开着时手动锁屏 → 解锁白屏卡死无法关闭）：后台 watcher 每 2s 轮询
+#   powerd state，非 active（锁屏/挂起）即杀触摸读取器 lua——主循环命令替换返回非零 →
+#   action=exit，走与点 × 完全相同的正常退出路径（回图书馆+清理）。
+#   v1 事件方案（goingToScreenSaver）真机无效：preventScreenSaver=1 期间手动锁屏疑不发事件，
+#   且 busybox ps 可能不显参数致特征串匹配落空——本轮询版绕开两者，确定性优先；
+#   面板短命（分钟级），2s 轮询开销可忽略。lipc 失败返回空跳过本轮防误杀；
+#   主进程死（kill -0 失败）watcher 自收。无 lipc-get-prop 时退回 120s 超时退出旧行为。
 _SS_WATCHER=""
-if command -v lipc-wait-event >/dev/null 2>&1; then
+if command -v lipc-get-prop >/dev/null 2>&1; then
     ( exec </dev/null >/dev/null 2>&1
-      lipc-wait-event com.lab126.powerd goingToScreenSaver >/dev/null 2>&1 || exit 0
-      _n=0
-      while [ "$_n" -lt 15 ]; do
-          # ps|awk 提取触摸读取器 PID（特征串匹配，避开 killall 可选 applet 的存在性风险）
-          for _p in $(ps 2>/dev/null | awk '/reading-insights-touch/ {print $1}'); do
+      while kill -0 $$ 2>/dev/null; do
+          sleep 2
+          _st="$(lipc-get-prop com.lab126.powerd state 2>/dev/null)"
+          [ -z "$_st" ] && continue
+          [ "$_st" = "active" ] && continue
+          [ -f "$DEBUG_FLAG" ] && echo "$(date): ss-watcher: state=[$_st], killing touch reader" >> "$LOG"
+          for _p in $(ps 2>/dev/null | awk '/[l]ua/ {print $1}'); do
               kill -TERM "$_p" 2>/dev/null
           done
-          kill -0 $$ 2>/dev/null || exit 0
-          sleep 1; _n=$((_n+1))
       done ) &
     _SS_WATCHER=$!
 fi
