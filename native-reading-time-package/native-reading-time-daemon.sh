@@ -76,13 +76,14 @@ book_progress() {
     command -v sqlite3 >/dev/null 2>&1 || { printf ''; return; }
     [ -r "$CC_DB" ] || { printf ''; return; }
     p=""
-    # ① 优先 cdeKey（book_id）匹配
+    # ① 优先 cdeKey（book_id）匹配——归一化（去'-'+大写）后比对，与封面链路同口径，
+    #   避免侧载书 book_id（文件名 hex）与 cc.db cdeKey 大小写/连字符差异导致 MISS
     if [ -n "$id" ]; then
-        eid="$(printf '%s' "$id" | sed "s/'/''/g")"
+        eid="$(printf '%s' "$id" | tr -d '-' | tr 'a-z' 'A-Z' | sed "s/'/''/g")"
         for _opt in "-readonly" ""; do
             [ -n "$p" ] && break
             p="$(sqlite3 $_opt -noheader "$CC_DB" \
-                "SELECT CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE cdeKey='$eid' LIMIT 1" 2>/dev/null | tr -d '[:space:]')"
+                "SELECT CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE upper(replace(cdeKey,'-',''))='$eid' LIMIT 1" 2>/dev/null | tr -d '[:space:]')"
             case "$p" in ''|*[!0-9]*) p="";; esac
         done
     fi
@@ -144,10 +145,13 @@ bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
 # v2.5：进度查询降频——progress 是慢变量，且 launcher backfill 开面板时会以 cc.db 最新值统一校正，
 #   daemon 侧每 5 次落账（≈5 分钟）或换书时真查一次即可；每小时 sqlite3 开库 60 次 → ≤12 次。
 _flush_n=0; _prog_bid=""; _prog_val=""
+# v2.5.x：flush 增加 force 参数——关书/切书/退出时传 1 强制真查 cc.db 进度，
+#   否则沿用节流缓存 _prog_val → 读到 100% 后紧接着关书，末行仍写旧值（进度永远差最后一截）。
 flush() {
+    _force="$1"
     if [ "$bucket" -gt 0 ] && [ -n "$bucket_id" ]; then
         _flush_n=$((_flush_n+1))
-        if [ "$bucket_id" != "$_prog_bid" ] || [ $((_flush_n % 5)) -eq 1 ]; then
+        if [ "$_force" = "1" ] || [ "$bucket_id" != "$_prog_bid" ] || [ $((_flush_n % 5)) -eq 1 ]; then
             _pv="$(book_progress "$bucket_id" "$bucket_title")"
             if [ -n "$_pv" ]; then
                 _prog_val="$_pv"; _prog_bid="$bucket_id"
@@ -169,7 +173,7 @@ flush() {
         bucket=0; bucket_id=""; bucket_title=""; bucket_date=""
     fi
 }
-cleanup() { flush; service_state="已停止"; write_report; }
+cleanup() { flush 1; service_state="已停止"; write_report; }
 trap 'cleanup; trap - INT TERM HUP EXIT; exit 0' INT TERM HUP
 trap cleanup EXIT
 
@@ -262,7 +266,7 @@ while :; do
             _last_context="$context"
         fi
         if [ "$was_reader" -eq 1 ] && [ -n "$current_id" ] && [ "$current_id" != "$book_id" ]; then
-            flush; service_state="切换书籍"; write_report
+            flush 1; service_state="切换书籍"; write_report
         fi
         if [ "$was_reader" -eq 0 ] || [ "$current_id" != "$book_id" ]; then
             current_id="$book_id"; current_title="$book_title"
@@ -292,7 +296,7 @@ while :; do
         if [ "$bucket" -ge "$SAVE_INTERVAL" ]; then flush; maybe_report; fi
     elif [ "$was_reader" -eq 1 ] && [ "$reader" -eq 0 ]; then
         add_edge_credit "$delta" "$current_id" "$current_title" "$today" "$EDGE_CREDIT_CLOSE_MAX"
-        flush
+        flush 1
         [ "$power" = "active" ] && service_state="已退出阅读" || service_state="锁屏暂停"
         write_report
     elif [ "$power" != "active" ]; then

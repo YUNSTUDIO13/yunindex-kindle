@@ -592,11 +592,14 @@ backfill_progress() {
     rm -f "$PROGRESS_CACHE"
     # v2.5：progress 回填改 cdeKey 优先（与 daemon book_progress 同口径）——旧版仅按书名匹配，
     #   书名空格/副标题差异即 MISS → 旧行进度的 st 滞留 reading → 同一本书「在读/读完」双计。
+    # v2.5.x：cdeKey 归一化（去'-'+大写）——侧载书 TSV book_id 来自文件名 hex，与 cc.db cdeKey
+    #   大小写/连字符不一致会 MISS；与封面链路 upper(replace(...)) 同口径。
     sqlite3 -readonly -separator "$TAB" "$CC_DB" \
-        "SELECT cdeKey, replace(replace(p_titles_0_nominal,char(9),' '),char(10),' '), CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE p_percentFinished>=0 AND p_percentFinished<=100;" \
+        "SELECT upper(replace(cdeKey,'-','')), replace(replace(p_titles_0_nominal,char(9),' '),char(10),' '), CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE cdeKey IS NOT NULL AND p_percentFinished>=0 AND p_percentFinished<=100;" \
         > "$PROGRESS_CACHE" 2>/dev/null || return 0
     [ -s "$PROGRESS_CACHE" ] || return 0
     awk -F"$TAB" -v map="$PROGRESS_CACHE" '
+    function norm(s){ gsub(/-/,"",s); return toupper(s) }
     BEGIN{ while((getline line < map)>0){ n=split(line,a,"\t"); if(a[3]!=""){ if(a[1]!="") pctk[a[1]]=a[3]; if(a[2]!="") pctn[a[2]]=a[3] } } close(map) }
     NR==1 && $1=="date" { print; next }
     {
@@ -605,7 +608,7 @@ backfill_progress() {
         else if(NF>=6){ t=$4; prog=$6; st=$5 }
         else if(NF>=4){ t=$4; prog=""; st="" }
         else { print; next }
-        np=""; if($2 in pctk) np=pctk[$2]; if(np=="" && (t in pctn)) np=pctn[t]; if(np!=""){ prog=np }
+        np=""; if(norm($2) in pctk) np=pctk[norm($2)]; if(np=="" && (t in pctn)) np=pctn[t]; if(np!=""){ prog=np }
         if(prog=="") prog=0; if(prog!~/^[0-9]+$/) prog=0
         st=(prog+0>=100)?"finished":"reading"
         printf "%s\t%s\t%s\t%s\t%s\t%s%s\n", $1,$2,$3,t,st,prog,extra
@@ -614,6 +617,20 @@ backfill_progress() {
     echo "$_bf_key" > "$BF_KEY" 2>/dev/null
 }
 backfill_progress
+
+# v2.5.x：cc.db 进度权威表（归一化 cdeKey → 百分比），供指标页「读完」判定兜底——
+#   指标页 fb 计数旧版只读 TSV，一旦 TSV 滞后（daemon 节流 / backfill MISS）即漏计「已读完」。
+CC_PROG="$BASE/.cc_prog.tsv"
+dump_cc_progress() {
+    if command -v sqlite3 >/dev/null 2>&1 && [ -r "$CC_DB" ]; then
+        sqlite3 -readonly -separator "$TAB" "$CC_DB" \
+            "SELECT upper(replace(cdeKey,'-','')), CAST(p_percentFinished+0.5 AS INTEGER) FROM Entries WHERE cdeKey IS NOT NULL AND p_percentFinished>=0 AND p_percentFinished<=100;" \
+            > "$CC_PROG.tmp" 2>/dev/null && mv "$CC_PROG.tmp" "$CC_PROG" 2>/dev/null || : > "$CC_PROG"
+    else
+        : > "$CC_PROG"
+    fi
+}
+dump_cc_progress
 
 # DIAG（写 launch.log）：定位"数据全0"根因——daemon 是否在跑 + lipc 属性真实值 + tsv 行数
 echo "$(date): DIAG daemon_pid=[$(pgrep -f native-reading-time-daemon 2>/dev/null | tr '\n' ' ')]"
@@ -637,14 +654,19 @@ _tm dashboard_start
 #   归档/回填改变行数同样触发；切年 key 含年份互不污染。命中则跳过整遍 calc 全扫。
 CALC_CACHE="$BASE/.calc_cache"
 _calc_n=$(wc -l < "$DATA" 2>/dev/null | tr -d ' ')
-_calc_key="${hyear}|${_calc_n}|${TS}"
+# v2.5.x：key 追加 cc.db(mtime+size)——仅进度变化而 tsv 行数未变时（如读完只更新 cc.db）也能失效重算
+_calc_cc=$(stat -c '%Y %s' "$CC_DB" 2>/dev/null || stat -f '%m %z' "$CC_DB" 2>/dev/null)
+_calc_key="${hyear}|${_calc_n}|${TS}|${_calc_cc}"
 if [ -f "$CALC_CACHE" ] && [ "$(sed -n '1{s/^#K|//;p;q}' "$CALC_CACHE" 2>/dev/null)" = "$_calc_key" ]; then
     calc=$(sed -n '2p' "$CALC_CACHE" 2>/dev/null)
 else
     # v2.5：awk 单路径算数据（python 快路径已整体移除，KPW6/Vera 5.19.03 无 python3）
-    calc=$(awk -F "$TAB" -v today="$TS" -v year="$hyear" '
+    # v2.5.x：注入 ccprog（归一化 cdeKey→进度）作「读完」兜底——TSV 滞后时以 cc.db 为准
+    calc=$(awk -F "$TAB" -v today="$TS" -v year="$hyear" -v ccprog="$CC_PROG" '
 function jd(y,m,d,   a){ a=int((14-m)/12); y=y+4800-a; m=m+12*a-3; return d+int((153*m+2)/5)+365*y+int(y/4)-int(y/100)+int(y/400)-32045 }
+function norm(s){ gsub(/-/,"",s); return toupper(s) }
 BEGIN {
+    if(ccprog!=""){ while((getline _l < ccprog)>0){ split(_l,_a,"\t"); if(_a[1]!="") cpct[_a[1]]=_a[2]+0 } close(ccprog) }
     split(today, td, "-"); ty=td[1]+0; tm=td[2]+0; tdd=td[3]+0
     _y=ty; _m=tm; if(_m<3){_m+=12;_y--}
     q=tdd; k=_y%100; j=int(_y/100)
@@ -663,6 +685,9 @@ BEGIN {
     if(sec<=0) next
     bid=$2; prog=0; st="reading"
     if(NF>=6){ prog=$6+0; st=$5 }
+    # v2.5.x：cc.db 兜底——取 TSV 与 cc.db 进度的较大值（进度单调不回退）
+    _cp=(norm(bid) in cpct)?cpct[norm(bid)]:0
+    if(_cp>prog){ prog=_cp }
     isfin=(prog>=100 || st=="finished")
     n2=split(dstr, dd, "-"); dy=dd[1]+0; dm=dd[2]+0; ddj=dd[3]+0
     d_jd=jd(dy,dm,ddj)
@@ -1076,6 +1101,8 @@ render_ranking() {
                 if (s != "") return s
                 return "(未知)"
             }
+            # v2.5.x：cdeKey 归一化（去'-'+大写），与封面链路/daemon 同口径，消除侧载书 key 差异 MISS
+            function norm(s){ gsub(/-/,"",s); return toupper(s) }
             BEGIN {
                 # v2.3.32：预扫数据文件 → title_of[bid] = 该 bid 首个非空书名（含跳 header/短行/非正时长）
                 if (df != "") {
@@ -1100,7 +1127,7 @@ render_ranking() {
                 if (cc != "") {
                     while ((getline line < cc) > 0) {
                         split(line, a, "\t")
-                        if (a[1] != "") { author[a[1]] = short_author(a[3], a[2]); cc_pct[a[1]] = a[4] + 0 }
+                        if (a[1] != "") { author[a[1]] = short_author(a[3], a[2]); cc_pct[a[1]] = a[4] + 0; cc_pct[norm(a[1])] = a[4] + 0 }
                     }
                     close(cc)
                 }
@@ -1154,8 +1181,12 @@ render_ranking() {
                     days = (fn > 0 && ln > 0) ? (ln - fn + 1) : 1
                     if (days < 1) days = 1
                     daily_arr[i] = int(dur_arr[i] / days)
-                    # 进度：代表 bid 的 tsv progress 列优先；为空或 0（历史数据常缺此列）则回落 cc.db
-                    pct_arr[i] = ((rb in pr) && pr[rb] > 0) ? pr[rb] : cc_pct[rb]
+                    # v2.5.x：进度取 TSV 与 cc.db 的较大值（进度单调不回退）——旧版 TSV 非 0 即优先，
+                    #   末行滞后（如读完却写 87）时会一直显示旧值，cc.db 的 100 被无视。
+                    _tp = ((rb in pr) && pr[rb] > 0) ? pr[rb] + 0 : 0
+                    _cp = (rb in cc_pct) ? cc_pct[rb] + 0 : 0
+                    _cn = norm(rb); if (_cn in cc_pct) { _cv = cc_pct[_cn] + 0; if (_cv > _cp) _cp = _cv }
+                    pct_arr[i] = (_cp > _tp) ? _cp : _tp
                     if (pct_arr[i] == "") pct_arr[i] = 0
                     laT[i] = (tk in ldT) ? ldT[tk] : ""
                 }
