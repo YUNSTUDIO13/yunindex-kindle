@@ -2,6 +2,31 @@
 
 > v2.4：跨年归档 + 全链路提速。v2.3：阅读排行页（rank）首发。Dashboard 按年统计；Ranking 强制跨年汇总，不串味。
 
+## ✦ v2.5.3（2026-10-09）读完进度不达 100% / 指标页漏计「已读完」修复
+
+**症状**：书已读完，排行页进度条仍停在旧值（如 87%），指标页「完成」计数不增加。
+
+**根因（三层叠加）**：
+1. **采集层**：daemon `flush()` 对进度查询做了节流（每 5 次落账才真查一次），关书/切书调 `flush`
+   未强制刷新 → 读到 100% 后紧接着关书，末行仍写几分钟前的旧进度（如 87/reading）。
+2. **校正层**：launcher `backfill_progress()` 以 cdeKey→书名校正 TSV，但 cdeKey 用**原样**匹配，
+   而封面链路用 `upper(replace(cdeKey,'-',''))` 归一化匹配。侧载书 TSV 的 book_id 来自文件名 hex
+   （大写），与 cc.db cdeKey 大小写/连字符不一致即 MISS；书名兜底对 z-lib 侧载书天然失效 → 校不回来。
+3. **展示层**：指标页「完成」判定只读 TSV（无 cc.db 兜底）；排行页进度仅在 TSV=0 时才回落 cc.db，
+   TSV 非 0 即优先 → TSV 一旦滞后，两处一起错。
+
+**修复**：
+- daemon `flush()` 增 `force` 参数，关书/切书/退出三处传 `1` 强制真查 cc.db 进度；
+- `book_progress()` cdeKey 匹配改归一化比对（与封面链路同口径）；
+- `backfill_progress()` SQL 输出归一化 cdeKey + awk 查找归一化；
+- 新增 `dump_cc_progress()`（`.cc_prog.tsv`：归一化 cdeKey→进度），指标页「完成」判定改用
+  `max(TSV, cc.db)`，calc 缓存 key 追加 cc.db(mtime+size) 防漏算；
+- 排行页进度改用 `max(TSV, cc.db)`（进度单调不回退）。
+
+**验证**：本地模拟——daemon 归一化匹配（大小写/连字符差异、侧载 hex）、backfill 归一化回填、
+指标页 fb 0→2、排行取大值（87/100/45）、flush 节流（4 次落账读 80 却写 50 → force 后写 100）
+全部通过；双脚本 `sh -n` 通过。真机验证通过。
+
 ## ✦ v2.5.2（2026-09-25）锁屏白屏修复：锁屏即退出
 
 **根因**：面板开着时手动锁屏，launcher 仍阻塞在触摸读取循环里（`timeout 120 lua`），
